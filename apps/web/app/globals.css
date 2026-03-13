@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #F5F2EC;
+    --surface: #FFFFFF;
+    --surface2: #F0EDE6;
+    --border: #E2DDD6;
+    --text: #1A1714;
+    --text2: #6B6560;
+    --text3: #9B9590;
+    --accent: #2D5F3F;
+    --accent2: #C84B31;
+    --yellow: #E8A020;
+    --blue: #2B4C7E;
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+  }
+}
