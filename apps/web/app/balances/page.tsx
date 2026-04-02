@@ -1,7 +1,12 @@
 import { AppShell } from '@/components/layout/AppShell';
 import { AuthHydrator } from '@/components/layout/AuthHydrator';
-import { BalancesPageClient } from '@/components/balances/BalancesPageClient';
 import { requireHouseholdContext } from '@/lib/household-context';
+import dynamic from 'next/dynamic';
+
+const BalancesPageClient = dynamic(
+  () => import('@/components/balances/BalancesPageClient').then((mod) => mod.BalancesPageClient),
+  { ssr: false }
+);
 
 export default async function BalancesPage() {
   const { household, member } = await requireHouseholdContext();

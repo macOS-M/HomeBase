@@ -3,6 +3,24 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
+  const { pathname } = request.nextUrl;
+  const isAuthRoute = pathname.startsWith('/auth');
+  const isApiRoute = pathname.startsWith('/api');
+  const isLoginRoute = pathname === '/auth/login';
+  const isRegisterRoute = pathname === '/auth/register';
+
+  // Let API routes handle their own auth responses (JSON),
+  // otherwise middleware redirects can return HTML to fetch callers.
+  if (isApiRoute) {
+    return response;
+  }
+
+  // Protected pages already enforce auth in server components.
+  // Skipping auth checks in middleware removes an extra Supabase round-trip
+  // during tab-to-tab navigation.
+  if (!isAuthRoute) {
+    return response;
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -43,22 +61,7 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  const { pathname } = request.nextUrl;
-  const isAuthRoute = pathname.startsWith('/auth');
-  const isApiRoute = pathname.startsWith('/api');
-  const isLoginRoute = pathname === '/auth/login';
-
-  // Let API routes handle their own auth responses (JSON),
-  // otherwise middleware redirects can return HTML to fetch callers.
-  if (isApiRoute) {
-    return response;
-  }
-
-  if (!user && !isAuthRoute) {
-    return NextResponse.redirect(new URL('/auth/login', request.url));
-  }
-
-  if (user && isLoginRoute) {
+  if (user && (isLoginRoute || isRegisterRoute)) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 

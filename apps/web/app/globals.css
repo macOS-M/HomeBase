@@ -21,8 +21,19 @@
     @apply box-border;
   }
 
+  html,
   body {
+    min-height: 100%;
+    margin: 0;
+    background-color: var(--bg);
+  }
+
+  body {
+    min-height: 100dvh;
     background-color: var(--bg);
     color: var(--text);
+  }
+  .panel{
+    margin-bottom: 1rem;
   }
 }

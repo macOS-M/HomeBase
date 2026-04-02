@@ -1,7 +1,12 @@
 import { AppShell } from '@/components/layout/AppShell';
 import { AuthHydrator } from '@/components/layout/AuthHydrator';
-import { WalletPageClient } from '@/components/wallet/WalletPageClient';
 import { requireHouseholdContext } from '@/lib/household-context';
+import dynamic from 'next/dynamic';
+
+const WalletPageClient = dynamic(
+  () => import('@/components/wallet/WalletPageClient').then((mod) => mod.WalletPageClient),
+  { ssr: false }
+);
 
 export default async function WalletPage() {
   const { household, member } = await requireHouseholdContext();

@@ -141,6 +141,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              prefetch
               className={`flex-1 mx-0.5 rounded-lg py-1.5 text-center text-[11px] transition-colors ${
                 active ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/85'
               }`}
@@ -169,6 +170,7 @@ function NavItem({
   return (
     <Link
       href={href}
+      prefetch
       className={`flex items-center gap-2.5 px-5 py-2.5 mx-0 text-sm transition-all border-l-[3px] ${
         active
           ? 'text-white bg-white/8 border-l-[#E8A020] font-medium'

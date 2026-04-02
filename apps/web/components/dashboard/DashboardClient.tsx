@@ -52,7 +52,6 @@ export function DashboardClient({ member, household }: Props) {
   return (
     <>
       <style suppressHydrationWarning>{`
-        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap');
         .dash-root { flex:1; background:#0E0F11; min-height:100vh; font-family:'Geist',sans-serif; color:#F0EDE8; }
         .dash-topbar { background:rgba(14,15,17,0.85); backdrop-filter:blur(20px); border-bottom:1px solid rgba(255,255,255,0.06); padding:0 32px; height:60px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:50; }
         .dash-topbar-title { font-family:'Instrument Serif',serif; font-size:18px; color:#F0EDE8; }

@@ -92,7 +92,7 @@ export default function JoinPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F2EC] flex items-center justify-center px-4">
+    <div className="min-h-[100dvh] bg-[#F5F2EC] flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-10">
           <h1 className="text-4xl font-serif text-[#1A1714] tracking-tight">HomeBase</h1>

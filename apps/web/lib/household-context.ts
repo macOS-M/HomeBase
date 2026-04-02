@@ -4,40 +4,35 @@ import { createServerClient } from '@/lib/supabase/server';
 export async function requireHouseholdContext() {
   const supabase = createServerClient();
 
-  let user = null;
-
   try {
-    const {
-      data: { user: resolvedUser },
-    } = await supabase.auth.getUser();
-    user = resolvedUser;
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session?.user) {
+      redirect('/auth/login');
+    }
+
+    const user = session.user;
+
+    const { data: memberWithHousehold } = await supabase
+      .from('members')
+      .select('*, household:households(*)')
+      .eq('user_id', user.id)
+      .single();
+
+    const member = memberWithHousehold as any;
+
+    if (!member) {
+      redirect('/auth/join');
+    }
+
+    const household = member.household;
+
+    if (!household) {
+      redirect('/auth/join');
+    }
+
+    return { user, member, household };
   } catch {
     redirect('/auth/login');
   }
-
-  if (!user) {
-    redirect('/auth/login');
-  }
-
-  const { data: member } = await supabase
-    .from('members')
-    .select('*')
-    .eq('user_id', user.id)
-    .single();
-
-  if (!member) {
-    redirect('/auth/join');
-  }
-
-  const { data: household } = await supabase
-    .from('households')
-    .select('*')
-    .eq('id', member.household_id)
-    .single();
-
-  if (!household) {
-    redirect('/auth/join');
-  }
-
-  return { user, member, household };
 }

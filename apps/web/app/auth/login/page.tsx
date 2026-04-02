@@ -1,12 +1,15 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const supabase = createClient();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
 
@@ -33,6 +36,25 @@ export default function LoginPage() {
     setLoading(false);
   }
 
+  async function handlePasswordLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setPasswordLoading(true);
+    setError('');
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setError(error.message);
+      setPasswordLoading(false);
+      return;
+    }
+
+    window.location.href = '/dashboard';
+  }
+
   async function handleGoogle() {
     setError('');
     const { error } = await supabase.auth.signInWithOAuth({
@@ -54,7 +76,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F2EC] flex items-center justify-center px-4">
+    <div className="min-h-[100dvh] bg-[#F5F2EC] flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-10">
@@ -82,6 +104,55 @@ export default function LoginPage() {
             <>
               <h2 className="font-semibold text-[#1A1714] text-lg mb-6">Sign in</h2>
 
+              {/* Email + password */}
+              <form onSubmit={handlePasswordLogin} className="space-y-3 mb-5">
+                <div>
+                  <label className="block text-xs font-medium text-[#6B6560] mb-1.5">
+                    Email address
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full px-3.5 py-2.5 border border-[#E2DDD6] rounded-lg text-sm text-[#1A1714] placeholder-[#9B9590] focus:outline-none focus:border-[#2D5F3F] transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-[#6B6560] mb-1.5">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Your password"
+                    className="w-full px-3.5 py-2.5 border border-[#E2DDD6] rounded-lg text-sm text-[#1A1714] placeholder-[#9B9590] focus:outline-none focus:border-[#2D5F3F] transition-colors"
+                  />
+                </div>
+
+                {error && (
+                  <p className="text-xs text-[#C84B31]">{error}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={passwordLoading}
+                  className="w-full py-2.5 bg-[#2D5F3F] text-white rounded-lg text-sm font-medium hover:bg-[#245234] transition-colors disabled:opacity-60"
+                >
+                  {passwordLoading ? 'Signing in...' : 'Sign in with password'}
+                </button>
+              </form>
+
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex-1 h-px bg-[#E2DDD6]" />
+                <span className="text-xs text-[#9B9590]">or</span>
+                <div className="flex-1 h-px bg-[#E2DDD6]" />
+              </div>
+
               {/* Google */}
               <button
                 onClick={handleGoogle}
@@ -98,7 +169,7 @@ export default function LoginPage() {
 
               <div className="flex items-center gap-3 mb-5">
                 <div className="flex-1 h-px bg-[#E2DDD6]" />
-                <span className="text-xs text-[#9B9590]">or</span>
+                <span className="text-xs text-[#9B9590]">or magic link</span>
                 <div className="flex-1 h-px bg-[#E2DDD6]" />
               </div>
 
@@ -131,12 +202,20 @@ export default function LoginPage() {
                 </button>
               </form>
 
-              <p className="text-center text-xs text-[#9B9590] mt-5">
-                No account yet?{' '}
-                <a href="/auth/join" className="text-[#2D5F3F] font-medium hover:underline">
-                  Join a household
-                </a>
-              </p>
+              <div className="text-center text-xs text-[#9B9590] mt-5 space-y-1">
+                <p>
+                  No account yet?{' '}
+                  <Link href="/auth/register" className="text-[#2D5F3F] font-medium hover:underline">
+                    Create account
+                  </Link>
+                </p>
+                <p>
+                  Already have an account and invite code?{' '}
+                  <Link href="/auth/join" className="text-[#2D5F3F] font-medium hover:underline">
+                    Join a household
+                  </Link>
+                </p>
+              </div>
             </>
           )}
         </div>
