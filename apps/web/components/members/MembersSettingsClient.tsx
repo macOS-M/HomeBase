@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuthStore } from '@homebase/store';
 import { formatCurrency } from '@homebase/utils';
@@ -24,11 +24,6 @@ export function MembersSettingsClient({
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const monthlyIncome = useMemo(() => {
-    const value = Number(incomeDraft || '0');
-    return Number.isFinite(value) && value >= 0 ? value : 0;
-  }, [incomeDraft]);
-
   const allocationTotal = useMemo(() => {
     return members.reduce((sum, member) => {
       const value = Number(memberDrafts[member.id] || '0');
@@ -36,18 +31,15 @@ export function MembersSettingsClient({
     }, 0);
   }, [members, memberDrafts]);
 
-  const remaining = Number((monthlyIncome - allocationTotal).toFixed(2));
-  const isBalanced = Math.abs(remaining) < 0.01;
+  useEffect(() => {
+    setIncomeDraft(allocationTotal.toFixed(2));
+  }, [allocationTotal]);
 
   async function saveBudgetSettings() {
     setError('');
     setSuccess('');
 
-    const parsedIncome = Number(incomeDraft || '0');
-    if (!Number.isFinite(parsedIncome) || parsedIncome < 0) {
-      setError('Monthly income must be 0 or greater.');
-      return;
-    }
+    const parsedIncome = Number(allocationTotal.toFixed(2));
 
     const updates = members.map((member) => {
       const raw = memberDrafts[member.id] ?? '0';
@@ -60,11 +52,6 @@ export function MembersSettingsClient({
         monthly_budget: Number(parsed.toFixed(2)),
       };
     });
-
-    if (!isBalanced) {
-      setError(`Member budgets must add up to monthly income. Remaining: ${formatCurrency(remaining)}`);
-      return;
-    }
 
     setSaving(true);
 
@@ -108,13 +95,13 @@ export function MembersSettingsClient({
 
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-medium text-[#6B6560] mb-1">Monthly Income</label>
+            <label className="block text-xs font-medium text-[#6B6560] mb-1">Monthly Income (auto)</label>
             <input
               type="number"
               min="0"
               step="0.01"
               value={incomeDraft}
-              onChange={(e) => setIncomeDraft(e.target.value)}
+              readOnly
               className="w-full px-3 py-2 rounded-lg border border-[#E2DDD6] text-sm"
             />
           </div>
@@ -122,9 +109,7 @@ export function MembersSettingsClient({
             <div className="w-full rounded-lg border border-[#E2DDD6] p-3 bg-[#F8F5F0]">
               <p className="text-xs text-[#6B6560]">Allocated</p>
               <p className="text-sm font-semibold text-[#1A1714]">{formatCurrency(allocationTotal)}</p>
-              <p className={`text-xs mt-1 ${isBalanced ? 'text-[#2D5F3F]' : 'text-[#C84B31]'}`}>
-                {isBalanced ? 'All budget allocated' : `Remaining: ${formatCurrency(remaining)}`}
-              </p>
+              <p className="text-xs mt-1 text-[#2D5F3F]">Auto-synced from member budgets</p>
             </div>
           </div>
         </div>
@@ -133,7 +118,7 @@ export function MembersSettingsClient({
       <div className="mt-6 bg-white rounded-xl border border-[#E8E2D9] overflow-hidden">
         <div className="p-4 border-b border-[#EFE9E0]">
           <h3 className="text-sm font-semibold text-[#1A1714]">Member budget split</h3>
-          <p className="text-xs text-[#6B6560] mt-1">Each member budget should add up to the household monthly income.</p>
+          <p className="text-xs text-[#6B6560] mt-1">Household monthly income is automatically calculated from all member budgets.</p>
         </div>
 
         {members.length === 0 ? (

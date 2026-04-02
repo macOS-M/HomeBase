@@ -4,8 +4,8 @@ import { FormEvent, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useExpensesAll, useCreateExpense, useDeleteExpense, useCategories, useMembers } from '@homebase/api';
 import { useUIStore } from '@homebase/store';
-import { calculateEqualSplits, formatCurrency, formatRelativeDate } from '@homebase/utils';
-import type { Household, Member } from '@homebase/types';
+import { calculateEqualSplits, calculatePercentageSplits, formatCurrency, formatRelativeDate } from '@homebase/utils';
+import type { Household, Member, SplitType } from '@homebase/types';
 
 function getLocalDateInputValue() {
   const now = new Date();
@@ -65,6 +65,8 @@ const STYLES = `
   .fld-input { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:9px 12px; font-family:'Geist',sans-serif; font-size:13px; color:#F0EDE8; outline:none; width:100%; }
   .fld-input:focus { border-color:rgba(201,168,76,0.4); }
   .fld-input::placeholder { color:#3D3935; }
+  select.fld-input { background:#1f2022; color:#F0EDE8; }
+  select.fld-input option { background:#1f2022; color:#F0EDE8; }
   .form-error { font-size:12px; color:#E07B6A; }
 
   /* Expense list */
@@ -97,7 +99,8 @@ const STYLES = `
   .breakdown-pct { font-size:11px; color:#3D3935; width:30px; text-align:right; font-family:'Geist Mono',monospace; }
 
   /* Month selector */
-  .month-sel { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 12px; font-family:'Geist',sans-serif; font-size:13px; color:#A8A29E; cursor:pointer; outline:none; }
+  .month-sel { background:#1f2022; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:6px 12px; font-family:'Geist',sans-serif; font-size:13px; color:#F0EDE8; cursor:pointer; outline:none; }
+  .month-sel option { background:#1f2022; color:#F0EDE8; }
 
   /* Toast */
   .toast { position:fixed; bottom:28px; right:28px; background:#1E1F22; border:1px solid rgba(255,255,255,0.1); color:#F0EDE8; padding:11px 18px; border-radius:10px; font-size:13px; font-weight:500; box-shadow:0 8px 32px rgba(0,0,0,0.4); z-index:9999; animation:toastIn 0.2s ease; }
@@ -125,6 +128,9 @@ export function ExpensesPageClient({ household, member }: { household: Household
   const [categoryId, setCategoryId] = useState('');
   const [paidBy, setPaidBy] = useState(member.id);
   const [date, setDate] = useState(getLocalDateInputValue());
+  const [splitType, setSplitType] = useState<SplitType>(
+    household.default_split_type === 'percentage' ? 'percentage' : 'equal'
+  );
   const [filterCat, setFilterCat] = useState('all');
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -156,6 +162,20 @@ export function ExpensesPageClient({ household, member }: { household: Household
     return Object.values(map).sort((a, b) => b.total - a.total);
   }, [expenses, categories]);
 
+  function buildPercentageSplits(totalAmount: number) {
+    const totalBudget = members.reduce((sum, m) => sum + Math.max(0, m.monthly_budget ?? 0), 0);
+    if (totalBudget <= 0) {
+      return calculateEqualSplits(totalAmount, members.map((m) => m.id));
+    }
+
+    const percentages = members.map((m) => ({
+      member_id: m.id,
+      percentage: ((Math.max(0, m.monthly_budget ?? 0) / totalBudget) * 100),
+    }));
+
+    return calculatePercentageSplits(totalAmount, percentages);
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     const parsed = Number(amount);
@@ -163,12 +183,18 @@ export function ExpensesPageClient({ household, member }: { household: Household
     if (!categoryId) { setError('Pick a category'); return; }
     setError('');
     try {
+      const splits =
+        splitType === 'percentage'
+          ? buildPercentageSplits(parsed)
+          : calculateEqualSplits(parsed, members.map((m) => m.id));
+
       await createExpense.mutateAsync({
         name, amount: parsed, category_id: categoryId, paid_by: paidBy,
-        split_type: 'equal', splits: calculateEqualSplits(parsed, members.map(m => m.id)), date,
+        split_type: splitType, splits, date,
       });
       setName(''); setAmount(''); setCategoryId(''); setPaidBy(member.id);
       setDate(getLocalDateInputValue());
+      setSplitType(household.default_split_type === 'percentage' ? 'percentage' : 'equal');
       setFilterCat('all');
       setSelectedMonth(date.slice(0, 7));
       setShowForm(false);
@@ -259,6 +285,18 @@ export function ExpensesPageClient({ household, member }: { household: Household
                         <label className="fld-label">Date</label>
                         <input className="fld-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
                       </div>
+                      <div className="fld">
+                        <label className="fld-label">Split Type</label>
+                        <select className="fld-input" value={splitType} onChange={e => setSplitType(e.target.value as SplitType)}>
+                          <option value="equal">Equal</option>
+                          <option value="percentage">By Member % (Budget Share)</option>
+                        </select>
+                      </div>
+                    </div>
+                    {splitType === 'percentage' && (
+                      <div className="panel-sub">Uses each member monthly budget as their share of each expense (for example 60/40).</div>
+                    )}
+                    <div className="form-row">
                       <div className="fld" style={{justifyContent:'flex-end'}}>
                         <button type="submit" className="btn-gold" disabled={createExpense.isPending} style={{height:38}}>
                           {createExpense.isPending ? 'Adding…' : 'Add Expense'}

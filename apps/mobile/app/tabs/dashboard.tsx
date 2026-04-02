@@ -18,6 +18,7 @@ export default function DashboardScreen() {
   const { selectedMonth } = useUIStore();
 
   const householdId = household?.id ?? '';
+ 
 
   const { data: expenses = [] } = useExpenses(supabase, householdId, selectedMonth);
   const { data: bills = [] } = useBills(supabase, householdId);
@@ -26,7 +27,8 @@ export default function DashboardScreen() {
   const { data: members = [] } = useMembers(supabase, householdId);
 
   const totalSpent = expenses.reduce((s, e) => s + e.amount, 0);
-  const income = household?.monthly_income ?? 0;
+  const memberBudgetTotal = members.reduce((sum, m) => sum + (m.monthly_budget ?? 0), 0);
+  const income = household?.monthly_income ?? memberBudgetTotal;
   const remaining = income - totalSpent;
   const pendingBills = bills.filter(b => b.status === 'pending');
   const settlements = calculateSmartSettlements(balances);

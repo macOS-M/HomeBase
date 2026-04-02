@@ -1,5 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { aggregateBalances, calculateSmartSettlements } from '@homebase/utils';
+import {
+  aggregateBalances,
+  calculateSmartSettlements,
+  calculateEqualSplits,
+  calculatePercentageSplits,
+} from '@homebase/utils';
 import type {
   Expense,
   CreateExpenseInput,
@@ -16,6 +21,11 @@ import type {
 // The supabase client is injected so both web and mobile can pass their own
 // platform-specific instance without this package depending on a specific env.
 type SupabaseClient = any;
+
+function toLocalISODate(input: Date) {
+  const offsetMs = input.getTimezoneOffset() * 60 * 1000;
+  return new Date(input.getTime() - offsetMs).toISOString().split('T')[0];
+}
 
 // ─── Query Keys ───────────────────────────────────────────────────────────────
 
@@ -46,13 +56,8 @@ export function useExpenses(
     queryKey: queryKeys.expenses(householdId, month),
     queryFn: async (): Promise<Expense[]> => {
       const startDate = `${month}-01`;
-      const endDate = new Date(
-        new Date(startDate).getFullYear(),
-        new Date(startDate).getMonth() + 1,
-        0
-      )
-        .toISOString()
-        .split('T')[0];
+      const start = new Date(`${startDate}T00:00:00`);
+      const endDate = toLocalISODate(new Date(start.getFullYear(), start.getMonth() + 1, 0));
 
       const { data, error } = await supabase
         .from('expenses')
@@ -279,6 +284,108 @@ export function useToggleBillStatus(
     return dueDate;
   }
 
+  async function createBillPaymentExpense(params: {
+    bill: {
+      id: string;
+      name: string;
+      amount: number;
+      due_date: string;
+    };
+  }) {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) throw userError;
+    if (!user) throw new Error('You must be signed in to pay bills.');
+
+    const { data: payer, error: payerError } = await supabase
+      .from('members')
+      .select('id')
+      .eq('household_id', householdId)
+      .eq('user_id', user.id)
+      .single();
+
+    if (payerError || !payer) {
+      throw new Error('Unable to determine who paid this bill.');
+    }
+
+    const { data: household, error: householdError } = await supabase
+      .from('households')
+      .select('default_split_type')
+      .eq('id', householdId)
+      .single();
+
+    if (householdError || !household) {
+      throw new Error('Unable to load household split settings.');
+    }
+
+    const { data: members, error: membersError } = await supabase
+      .from('members')
+      .select('id, monthly_budget')
+      .eq('household_id', householdId);
+
+    if (membersError || !members || members.length === 0) {
+      throw new Error('Unable to load household members for bill split.');
+    }
+
+    const amount = params.bill.amount;
+    const memberIds = members.map((m: any) => m.id);
+    const splitType = household.default_split_type === 'percentage' ? 'percentage' : 'equal';
+
+    const splits = splitType === 'percentage'
+      ? (() => {
+          const totalBudget = members.reduce((sum: number, m: any) => sum + Math.max(0, m.monthly_budget ?? 0), 0);
+          if (totalBudget <= 0) return calculateEqualSplits(amount, memberIds);
+          return calculatePercentageSplits(
+            amount,
+            members.map((m: any) => ({
+              member_id: m.id,
+              percentage: (Math.max(0, m.monthly_budget ?? 0) / totalBudget) * 100,
+            }))
+          );
+        })()
+      : calculateEqualSplits(amount, memberIds);
+
+    const { data: expense, error: expenseError } = await supabase
+      .from('expenses')
+      .insert({
+        household_id: householdId,
+        name: params.bill.name,
+        amount,
+        source_type: 'bill',
+        source_bill_id: params.bill.id,
+        category_id: null,
+        paid_by: payer.id,
+        split_type: splitType,
+        date: todayLocalISODate(),
+      })
+      .select('id')
+      .single();
+
+    if (expenseError || !expense) {
+      throw expenseError ?? new Error('Unable to create bill expense.');
+    }
+
+    const splitRows = splits.map((s) => ({
+      expense_id: expense.id,
+      member_id: s.member_id,
+      amount: s.amount,
+      percentage: s.percentage,
+      is_settled: false,
+    }));
+
+    const { error: splitError } = await supabase
+      .from('expense_splits')
+      .insert(splitRows);
+
+    if (splitError) {
+      await supabase.from('expenses').delete().eq('id', expense.id);
+      throw splitError;
+    }
+  }
+
   return useMutation({
     mutationFn: async ({
       billId,
@@ -297,13 +404,28 @@ export function useToggleBillStatus(
       if (billError) throw billError;
 
       if (status === 'paid') {
+        if (bill.status === 'paid') return;
+
         if (bill.recurring === 'once') {
+          const paidAt = new Date().toISOString();
           const { error } = await supabase
             .from('bills')
-            .update({ status: 'paid', paid_at: new Date().toISOString() })
+            .update({ status: 'paid', paid_at: paidAt })
             .eq('id', billId)
             .eq('household_id', householdId);
           if (error) throw error;
+
+          try {
+            await createBillPaymentExpense({ bill });
+          } catch (expenseError) {
+            await supabase
+              .from('bills')
+              .update({ status: 'pending', paid_at: null })
+              .eq('id', billId)
+              .eq('household_id', householdId);
+            throw expenseError;
+          }
+
           return;
         }
 
@@ -326,6 +448,17 @@ export function useToggleBillStatus(
 
         if (markPaidError) throw markPaidError;
 
+        try {
+          await createBillPaymentExpense({ bill });
+        } catch (expenseError) {
+          await supabase
+            .from('bills')
+            .update({ status: 'pending', paid_at: null })
+            .eq('id', billId)
+            .eq('household_id', householdId);
+          throw expenseError;
+        }
+
         const { error: createNextError } = await supabase
           .from('bills')
           .insert({
@@ -339,6 +472,12 @@ export function useToggleBillStatus(
           });
 
         if (createNextError) {
+          await supabase
+            .from('expenses')
+            .delete()
+            .eq('household_id', householdId)
+            .eq('source_type', 'bill')
+            .eq('source_bill_id', billId);
           await supabase
             .from('bills')
             .update({ status: 'pending', paid_at: null })
@@ -354,6 +493,15 @@ export function useToggleBillStatus(
         throw new Error('Recurring paid bills are kept as history and cannot be reopened.');
       }
 
+      if (bill.status === 'paid' && bill.recurring === 'once') {
+        await supabase
+          .from('expenses')
+          .delete()
+          .eq('household_id', householdId)
+          .eq('source_type', 'bill')
+          .eq('source_bill_id', billId);
+      }
+
       const { error } = await supabase
         .from('bills')
         .update({ status: 'pending', paid_at: null })
@@ -364,6 +512,9 @@ export function useToggleBillStatus(
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bills', householdId] });
       queryClient.invalidateQueries({ queryKey: ['dashboard', householdId] });
+      queryClient.invalidateQueries({ queryKey: ['expenses-all', householdId] });
+      queryClient.invalidateQueries({ queryKey: ['expenses', householdId] });
+      queryClient.invalidateQueries({ queryKey: ['balances', householdId] });
     },
   });
 }

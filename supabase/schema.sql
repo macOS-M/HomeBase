@@ -11,10 +11,15 @@ create table households (
   name            text not null,
   created_by      uuid references auth.users(id) on delete set null,
   monthly_income  numeric(10,2),
+  default_split_type text not null default 'equal' check (default_split_type in ('equal','percentage')),
   budget_period   text not null default 'monthly' check (budget_period in ('monthly','biweekly','custom')),
   invite_code     text not null unique default upper(substring(md5(random()::text) from 1 for 6)),
   created_at      timestamptz not null default now()
 );
+
+alter table households add column if not exists default_split_type text not null default 'equal';
+alter table households drop constraint if exists households_default_split_type_check;
+alter table households add constraint households_default_split_type_check check (default_split_type in ('equal','percentage'));
 
 alter table households enable row level security;
 
@@ -127,6 +132,8 @@ create table expenses (
   household_id  uuid not null references households(id) on delete cascade,
   name          text not null,
   amount        numeric(10,2) not null check (amount > 0),
+  source_type   text not null default 'manual' check (source_type in ('manual','bill')),
+  source_bill_id uuid references bills(id) on delete set null,
   category_id   uuid references categories(id) on delete set null,
   paid_by       uuid not null references members(id) on delete restrict,
   split_type    text not null default 'equal' check (split_type in ('equal','percentage','assigned')),
@@ -135,6 +142,11 @@ create table expenses (
   notes         text,
   created_at    timestamptz not null default now()
 );
+
+alter table expenses add column if not exists source_type text not null default 'manual';
+alter table expenses drop constraint if exists expenses_source_type_check;
+alter table expenses add constraint expenses_source_type_check check (source_type in ('manual','bill'));
+alter table expenses add column if not exists source_bill_id uuid references bills(id) on delete set null;
 
 alter table expenses enable row level security;
 

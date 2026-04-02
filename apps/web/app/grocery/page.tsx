@@ -4,6 +4,11 @@ import { createServerClient } from '@/lib/supabase/server';
 import { requireHouseholdContext } from '@/lib/household-context';
 import { formatCurrency } from '@homebase/utils';
 
+function toLocalISODate(input: Date) {
+  const offsetMs = input.getTimezoneOffset() * 60 * 1000;
+  return new Date(input.getTime() - offsetMs).toISOString().split('T')[0];
+}
+
 export default async function GroceryPage() {
   const { household, member } = await requireHouseholdContext();
   const supabase = createServerClient();
@@ -18,9 +23,7 @@ export default async function GroceryPage() {
   const now = new Date();
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const startDate = `${month}-01`;
-  const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-    .toISOString()
-    .split('T')[0];
+  const endDate = toLocalISODate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
   const { data: groceryExpenses = [] } = await supabase
     .from('expenses')

@@ -19,6 +19,7 @@ export interface Household {
   name: string;
   created_by: string;
   monthly_income?: number;
+  default_split_type?: 'equal' | 'percentage';
   budget_period: 'monthly' | 'biweekly' | 'custom';
   invite_code: string;
   created_at: string;
@@ -40,6 +41,8 @@ export interface Expense {
   household_id: string;
   name: string;
   amount: number;
+  source_type?: 'manual' | 'bill';
+  source_bill_id?: string;
   category_id: string;
   paid_by: string; // member_id
   split_type: SplitType;
@@ -53,6 +56,8 @@ export interface Expense {
 export interface CreateExpenseInput {
   name: string;
   amount: number;
+  source_type?: 'manual' | 'bill';
+  source_bill_id?: string;
   category_id: string;
   paid_by: string;
   split_type: SplitType;

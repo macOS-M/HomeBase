@@ -37,9 +37,9 @@ export function DashboardClient({ member, household }: Props) {
   );
 
   const expenseSpent = expenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const paidBillsSpent = paidBillsForSelectedMonth.reduce((sum, bill) => sum + bill.amount, 0);
-  const totalSpent = expenseSpent + paidBillsSpent;
-  const monthlyIncome = household.monthly_income ?? 0;
+  const totalSpent = expenseSpent;
+  const memberBudgetTotal = members.reduce((sum, m) => sum + (m.monthly_budget ?? 0), 0);
+  const monthlyIncome = household.monthly_income ?? memberBudgetTotal;
   const remaining = monthlyIncome - totalSpent;
   const spentPct = monthlyIncome > 0 ? (totalSpent / monthlyIncome) * 100 : 0;
   const pendingTotal = pendingBills.reduce((sum, bill) => sum + bill.amount, 0);
@@ -51,13 +51,14 @@ export function DashboardClient({ member, household }: Props) {
 
   return (
     <>
-      <style>{`
+      <style suppressHydrationWarning>{`
         @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap');
         .dash-root { flex:1; background:#0E0F11; min-height:100vh; font-family:'Geist',sans-serif; color:#F0EDE8; }
         .dash-topbar { background:rgba(14,15,17,0.85); backdrop-filter:blur(20px); border-bottom:1px solid rgba(255,255,255,0.06); padding:0 32px; height:60px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:50; }
         .dash-topbar-title { font-family:'Instrument Serif',serif; font-size:18px; color:#F0EDE8; }
         .dash-topbar-right { display:flex; align-items:center; gap:10px; }
-        .month-select { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:6px 12px; font-family:'Geist',sans-serif; font-size:13px; color:#A8A29E; cursor:pointer; outline:none; }
+        .month-select { background:#1f2022; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:6px 12px; font-family:'Geist',sans-serif; font-size:13px; color:#F0EDE8; cursor:pointer; outline:none; }
+        .month-select option { background:#1f2022; color:#F0EDE8; }
         .topbar-btn { display:inline-flex; align-items:center; gap:6px; padding:7px 16px; background:#C9A84C; color:#0E0F11; border-radius:8px; font-family:'Geist',sans-serif; font-size:13px; font-weight:600; text-decoration:none; border:none; cursor:pointer; }
         .topbar-btn:hover { background:#D4B05A; }
         .wallet-pill { display:inline-flex; align-items:center; gap:6px; background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.2); border-radius:20px; padding:4px 12px; font-size:12px; color:#C9A84C; font-family:'Geist Mono',monospace; font-weight:500; }
@@ -145,8 +146,8 @@ export function DashboardClient({ member, household }: Props) {
 
         <div className="dash-content">
           <div className="summary-strip">
-            <SummaryCell label="Monthly Income" value={formatCurrency(monthlyIncome)} sub="Combined household" accent="#C9A84C" />
-            <SummaryCell label="Total Spent" value={formatCurrency(totalSpent)} sub={`${Math.round(spentPct)}% of income · includes paid bills`} accent="#E07B6A" progress={spentPct} progressColor="#E07B6A" />
+            <SummaryCell label="Monthly Income" value={formatCurrency(monthlyIncome)} sub="Household total budget" accent="#C9A84C" />
+            <SummaryCell label="Total Spent" value={formatCurrency(totalSpent)} sub={`${Math.round(spentPct)}% of income`} accent="#E07B6A" progress={spentPct} progressColor="#E07B6A" />
             <SummaryCell label="Remaining" value={formatCurrency(remaining)} sub={remaining < 0 ? 'Over budget' : 'Available'} accent={remaining < 0 ? '#E07B6A' : '#6BA583'} />
             <SummaryCell label="Pending Bills" value={formatCurrency(pendingTotal)} sub={`${pendingBills.length} bill${pendingBills.length !== 1 ? 's' : ''} due`} accent="#7B9EC9" />
           </div>
@@ -324,12 +325,16 @@ function SummaryCell({ label, value, sub, accent, progress, progressColor }: {
 
 function MonthSelector() {
   const { selectedMonth, setSelectedMonth } = useUIStore();
+  const monthOptions = [
+    { value: '2026-03', label: 'March 2026' },
+    { value: '2026-02', label: 'February 2026' },
+    { value: '2026-01', label: 'January 2026' },
+  ];
+
   return (
     <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="month-select">
-      {['2026-03', '2026-02', '2026-01'].map(m => {
-        const [y, mo] = m.split('-');
-        const label = new Date(+y, +mo - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-        return <option key={m} value={m}>{label}</option>;
+      {monthOptions.map((month) => {
+        return <option key={month.value} value={month.value}>{month.label}</option>;
       })}
     </select>
   );

@@ -5,9 +5,15 @@ import {
 } from 'react-native';
 import { useAuthStore, useUIStore } from '@homebase/store';
 import { useExpenses, useCreateExpense, useCategories, useMembers } from '@homebase/api';
-import { formatCurrency, calculateEqualSplits } from '@homebase/utils';
+import { formatCurrency, calculateEqualSplits, calculatePercentageSplits } from '@homebase/utils';
 import type { SplitType } from '@homebase/types';
 import { supabase } from '@/lib/supabase';
+
+function getLocalDateISO() {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60 * 1000;
+  return new Date(now.getTime() - offsetMs).toISOString().split('T')[0];
+}
 
 export default function ExpensesScreen() {
   const { household } = useAuthStore();
@@ -24,10 +30,31 @@ export default function ExpensesScreen() {
   const [amount, setAmount] = useState('');
   const [selectedCat, setSelectedCat] = useState('');
   const [paidBy, setPaidBy] = useState('');
-  const [splitType, setSplitType] = useState<SplitType>('equal');
+  const [splitType, setSplitType] = useState<SplitType>(
+    household?.default_split_type === 'percentage' ? 'percentage' : 'equal'
+  );
 
   function resetForm() {
-    setName(''); setAmount(''); setSelectedCat(''); setPaidBy(''); setSplitType('equal');
+    setName('');
+    setAmount('');
+    setSelectedCat('');
+    setPaidBy('');
+    setSplitType(household?.default_split_type === 'percentage' ? 'percentage' : 'equal');
+  }
+
+  function buildPercentageSplits(totalAmount: number) {
+    const totalBudget = members.reduce((sum, m) => sum + Math.max(0, m.monthly_budget ?? 0), 0);
+    if (totalBudget <= 0) {
+      return calculateEqualSplits(totalAmount, members.map(m => m.id));
+    }
+
+    return calculatePercentageSplits(
+      totalAmount,
+      members.map((m) => ({
+        member_id: m.id,
+        percentage: (Math.max(0, m.monthly_budget ?? 0) / totalBudget) * 100,
+      }))
+    );
   }
 
   async function handleAdd() {
@@ -36,12 +63,15 @@ export default function ExpensesScreen() {
       return;
     }
     const amt = parseFloat(amount);
-    const splits = calculateEqualSplits(amt, members.map(m => m.id));
+    const splits =
+      splitType === 'percentage'
+        ? buildPercentageSplits(amt)
+        : calculateEqualSplits(amt, members.map(m => m.id));
 
     await createExpense.mutateAsync({
       name, amount: amt, category_id: selectedCat,
       paid_by: paidBy, split_type: splitType, splits,
-      date: new Date().toISOString().split('T')[0],
+      date: getLocalDateISO(),
     });
 
     resetForm();
@@ -135,7 +165,7 @@ export default function ExpensesScreen() {
 
             <FormLabel>Split type</FormLabel>
             <View style={styles.splitRow}>
-              {(['equal', 'percentage', 'assigned'] as SplitType[]).map(type => (
+              {(['equal', 'percentage'] as SplitType[]).map(type => (
                 <TouchableOpacity
                   key={type}
                   style={[styles.splitBtn, splitType === type && styles.splitBtnActive]}
@@ -147,6 +177,9 @@ export default function ExpensesScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+            {splitType === 'percentage' && (
+              <Text style={styles.helperText}>Uses each member monthly budget as their share (for example 60/40).</Text>
+            )}
 
             <TouchableOpacity
               style={[styles.submitBtn, createExpense.isPending && styles.disabled]}
@@ -226,6 +259,7 @@ const styles = StyleSheet.create({
   splitBtnActive: { borderColor: '#2D5F3F', backgroundColor: '#EAF2ED' },
   splitBtnText: { fontSize: 13, color: '#6B6560' },
   splitBtnTextActive: { color: '#2D5F3F', fontWeight: '500' },
+  helperText: { fontSize: 12, color: '#6B6560', marginTop: 8 },
   submitBtn: {
     backgroundColor: '#2D5F3F', borderRadius: 12, padding: 15,
     alignItems: 'center', marginTop: 28, marginBottom: 20,

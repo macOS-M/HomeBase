@@ -14,6 +14,7 @@ const navItems = [
   { href: '/balances',    icon: '⚖️', label: 'Balances'     },
   { href: '/wallet',      icon: '💰', label: 'Wallet'       },
   { href: '/members',     icon: '👥', label: 'Members'      },
+  { href: '/settings',    icon: '⚙️', label: 'Settings'     },
 ];
 
 export function Sidebar() {

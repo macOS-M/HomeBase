@@ -55,7 +55,7 @@ export function WalletPageClient({ household, member }: { household: Household; 
       </div>
 
       <form onSubmit={onSubmit} className="mt-6 bg-white rounded-xl border border-[#E8E2D9] p-4 grid gap-3 md:grid-cols-4">
-        <select value={type} onChange={(e) => setType(e.target.value as 'deposit' | 'withdraw')} className="px-3 py-2 rounded-lg border border-[#E2DDD6] text-sm">
+        <select value={type} onChange={(e) => setType(e.target.value as 'deposit' | 'withdraw')} className="px-3 py-2 rounded-lg border border-[#E2DDD6] text-sm bg-[#1f2022] text-[#F0EDE8]">
           <option value="deposit">Deposit</option>
           <option value="withdraw">Withdraw</option>
         </select>

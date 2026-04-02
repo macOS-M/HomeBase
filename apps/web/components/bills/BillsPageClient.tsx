@@ -37,6 +37,8 @@ const STYLES = `
   .fld-label { font-size:10px; font-weight:600; letter-spacing:0.8px; text-transform:uppercase; color:#4A4540; }
   .fld-input { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:9px 12px; font-size:13px; color:#F0EDE8; outline:none; width:100%; }
   .fld-input:focus { border-color:rgba(201,168,76,0.4); }
+  select.fld-input { background:#1f2022; color:#F0EDE8; }
+  select.fld-input option { background:#1f2022; color:#F0EDE8; }
   .form-error { font-size:12px; color:#E07B6A; }
 
   .tab-row { display:flex; gap:6px; padding:12px 20px; border-bottom:1px solid rgba(255,255,255,0.05); }
@@ -70,6 +72,21 @@ function getLocalDateInputValue() {
   const offsetMs = now.getTimezoneOffset() * 60 * 1000;
   return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
 }
+
+const BILL_ICON_OPTIONS = [
+  { value: '📄', label: 'General' },
+  { value: '⚡', label: 'Electricity' },
+  { value: '💧', label: 'Water' },
+  { value: '🔥', label: 'Gas' },
+  { value: '🌐', label: 'Internet' },
+  { value: '📱', label: 'Phone' },
+  { value: '🏠', label: 'Rent / Mortgage' },
+  { value: '🧾', label: 'Insurance' },
+  { value: '🚗', label: 'Car / Transport' },
+  { value: '💳', label: 'Credit Card' },
+  { value: '🎓', label: 'Tuition' },
+  { value: '🛒', label: 'Groceries' },
+];
 
 export function BillsPageClient({ household }: { household: Household }) {
   const supabase = createClient();
@@ -209,7 +226,11 @@ export function BillsPageClient({ household }: { household: Household }) {
                       </div>
                       <div className="fld">
                         <label className="fld-label">Icon</label>
-                        <input className="fld-input" value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="⚡" />
+                        <select className="fld-input" value={icon} onChange={(e) => setIcon(e.target.value)}>
+                          {BILL_ICON_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.value} {opt.label}</option>
+                          ))}
+                        </select>
                       </div>
                     </div>
                     <div className="form-row">
