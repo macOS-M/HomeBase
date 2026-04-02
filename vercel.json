@@ -1,0 +1,7 @@
+{
+  "buildCommand": "turbo run build --filter=web",
+  "devCommand": "turbo run dev --filter=web",
+  "installCommand": "pnpm install",
+  "root": "apps/web",
+  "outputDirectory": ".next"
+}
