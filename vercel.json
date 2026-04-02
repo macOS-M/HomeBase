@@ -3,5 +3,5 @@
   "devCommand": "turbo run dev --filter=web",
   "installCommand": "pnpm install",
   "root": "apps/web",
-  "outputDirectory": ".next"
+  "outputDirectory": "apps/web/.next"
 }
