@@ -6,7 +6,16 @@ import { redirect } from 'next/navigation';
 export default async function DashboardPage() {
   const supabase = createServerClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const {
+      data: { user: resolvedUser },
+    } = await supabase.auth.getUser();
+    user = resolvedUser;
+  } catch {
+    redirect('/auth/login');
+  }
+
   if (!user) redirect('/auth/login');
 
   const { data: member } = await supabase
