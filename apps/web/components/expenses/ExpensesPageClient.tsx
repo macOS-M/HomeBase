@@ -106,6 +106,28 @@ const STYLES = `
   .toast { position:fixed; bottom:28px; right:28px; background:#1E1F22; border:1px solid rgba(255,255,255,0.1); color:#F0EDE8; padding:11px 18px; border-radius:10px; font-size:13px; font-weight:500; box-shadow:0 8px 32px rgba(0,0,0,0.4); z-index:9999; animation:toastIn 0.2s ease; }
   @keyframes toastIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
   .empty { text-align:center; padding:36px 16px; font-size:13px; color:#3D3935; }
+
+  @media (max-width: 1024px) {
+    .ep-content { padding: 20px; }
+    .ep-grid { grid-template-columns: 1fr; }
+    .ep-summary { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 768px) {
+    .ep { min-height: calc(100vh - 56px); overflow-x: hidden; }
+    .ep-topbar { padding: 10px 14px; height: auto; min-height: 56px; align-items: flex-start; gap: 10px; }
+    .ep-actions { width: 100%; flex-wrap: wrap; }
+    .month-sel,
+    .btn-ghost { width: 100%; }
+    .ep-content { padding: 14px; }
+    .form-row { grid-template-columns: 1fr; }
+    .panel-hdr,
+    .ep-form,
+    .exp-row,
+    .breakdown-row,
+    .filter-row { padding-left: 14px; padding-right: 14px; }
+    .toast { left: 14px; right: 14px; bottom: 14px; }
+  }
 `;
 
 export function ExpensesPageClient({ household, member }: { household: Household; member: Member }) {

@@ -17,23 +17,68 @@ const navItems = [
   { href: '/settings',    icon: '⚙️', label: 'Settings'     },
 ];
 
+const mobileNavItems = [
+  { href: '/dashboard', icon: '🏠', label: 'Home' },
+  { href: '/expenses', icon: '📋', label: 'Expenses' },
+  { href: '/bills', icon: '⚡', label: 'Bills' },
+  { href: '/balances', icon: '⚖️', label: 'Balances' },
+  { href: '/settings', icon: '⚙️', label: 'Settings' },
+];
+
 export function Sidebar() {
   const pathname = usePathname();
-  const supabase = createClient();
   const { household, member, reset } = useAuthStore();
 
   async function handleSignOut(e: React.MouseEvent<HTMLAnchorElement>) {
     e.preventDefault();
-    await supabase.auth.signOut();
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    } catch {
+    }
     reset();
     window.location.href = '/auth/login';
   }
 
   return (
-    <aside className="fixed top-0 left-0 bottom-0 w-60 bg-[#1A1714] flex flex-col z-50">
+    <>
+      <input id="mobile-nav-toggle" type="checkbox" className="peer sr-only" />
+
+      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#1A1714] border-b border-white/8 z-[120] flex items-center justify-between px-4">
+        <label
+          htmlFor="mobile-nav-toggle"
+          className="w-9 h-9 rounded-lg border border-white/15 text-white/80 hover:text-white hover:border-white/30"
+          aria-label="Toggle navigation"
+          role="button"
+        >
+          <span className="w-full h-full flex items-center justify-center">☰</span>
+        </label>
+        <h1 className="font-serif text-lg text-white tracking-tight">HomeBase</h1>
+        <div className="w-9 h-9" />
+      </div>
+
+      <label
+        htmlFor="mobile-nav-toggle"
+        aria-label="Close navigation"
+        className="md:hidden fixed inset-0 bg-black/45 z-[110] opacity-0 pointer-events-none peer-checked:opacity-100 peer-checked:pointer-events-auto"
+      />
+
+      <aside
+        className="fixed top-0 left-0 bottom-0 w-60 bg-[#1A1714] flex flex-col z-[130] transform transition-transform duration-200 -translate-x-full pointer-events-none peer-checked:translate-x-0 peer-checked:pointer-events-auto md:translate-x-0 md:pointer-events-auto"
+      >
       {/* Logo */}
       <div className="px-6 py-7 border-b border-white/8">
-        <h1 className="font-serif text-xl text-white tracking-tight">HomeBase</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="font-serif text-xl text-white tracking-tight">HomeBase</h1>
+          <label
+            htmlFor="mobile-nav-toggle"
+            className="md:hidden w-8 h-8 rounded-lg border border-white/15 text-white/70"
+            aria-label="Close menu"
+            role="button"
+          >
+            <span className="w-full h-full flex items-center justify-center">✕</span>
+          </label>
+        </div>
         <span className="text-[11px] text-white/40 mt-0.5 block">Household Budget</span>
       </div>
 
@@ -46,7 +91,7 @@ export function Sidebar() {
       )}
 
       {/* Nav */}
-      <nav className="flex-1 py-3">
+      <nav className="flex-1 py-3 overflow-y-auto">
         <p className="text-[10px] uppercase tracking-widest text-white/25 px-6 pt-4 pb-1.5 font-semibold">Overview</p>
         {navItems.slice(0, 2).map((item) => (
           <NavItem key={item.href} {...item} active={pathname === item.href} />
@@ -88,6 +133,25 @@ export function Sidebar() {
         </Link>
       </div>
     </aside>
+
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-[100] border-t border-white/10 bg-[#1A1714] px-1 py-1.5 flex items-center justify-between">
+        {mobileNavItems.map((item) => {
+          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex-1 mx-0.5 rounded-lg py-1.5 text-center text-[11px] transition-colors ${
+                active ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/85'
+              }`}
+            >
+              <span className="block text-sm leading-4">{item.icon}</span>
+              <span className="block mt-0.5">{item.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </>
   );
 }
 

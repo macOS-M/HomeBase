@@ -10,6 +10,11 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
 
+  function getCallbackUrl(nextPath: string) {
+    const normalizedNext = nextPath.startsWith('/') ? nextPath : `/${nextPath}`;
+    return `${location.origin}/auth/callback?next=${encodeURIComponent(normalizedNext)}`;
+  }
+
   async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -17,7 +22,7 @@ export default function LoginPage() {
 
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${location.origin}/dashboard` },
+      options: { emailRedirectTo: getCallbackUrl('/dashboard') },
     });
 
     if (error) {
@@ -32,7 +37,7 @@ export default function LoginPage() {
     setError('');
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${location.origin}/auth/callback` },
+      options: { redirectTo: getCallbackUrl('/dashboard') },
     });
 
     if (error) {

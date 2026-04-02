@@ -132,6 +132,32 @@ export function DashboardClient({ member, household }: Props) {
         .grocery-rem-value { font-family:'Geist Mono',monospace; font-size:18px; font-weight:600; color:#6BA583; }
         .m-avatar { border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; color:#0E0F11; flex-shrink:0; }
         .empty { text-align:center; padding:28px 16px; font-size:13px; color:#3D3935; }
+
+        @media (max-width: 1024px) {
+          .dash-content { padding: 20px; }
+          .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .dash-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 768px) {
+          .dash-root { min-height: calc(100vh - 56px); overflow-x: hidden; }
+          .dash-topbar { padding: 10px 14px; height: auto; min-height: 56px; align-items: flex-start; gap: 10px; }
+          .dash-topbar-right { width: 100%; flex-wrap: wrap; gap: 8px; }
+          .month-select { flex: 1; min-width: 150px; }
+          .topbar-btn { width: 100%; justify-content: center; }
+          .wallet-pill { width: 100%; justify-content: center; }
+          .dash-content { padding: 14px; }
+          .summary-strip { grid-template-columns: 1fr; }
+          .summary-cell { padding: 16px; }
+          .summary-cell-value { font-size: 24px; }
+          .panel-header,
+          .panel-body,
+          .exp-row,
+          .bal-row,
+          .bill-row,
+          .grocery-widget { padding-left: 14px; padding-right: 14px; }
+          .settlement-callout { margin-left: 14px; margin-right: 14px; }
+        }
       `}</style>
 
       <div className="dash-root">
