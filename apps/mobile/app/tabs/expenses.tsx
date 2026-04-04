@@ -5,9 +5,11 @@ import {
 } from 'react-native';
 import { useAuthStore, useUIStore } from '@homebase/store';
 import { useExpenses, useCreateExpense, useCategories, useMembers } from '@homebase/api';
-import { formatCurrency, calculateEqualSplits, calculatePercentageSplits } from '@homebase/utils';
+import { COMMON_CURRENCIES, formatCurrency, calculateEqualSplits, calculatePercentageSplits } from '@homebase/utils';
 import type { SplitType } from '@homebase/types';
 import { supabase } from '@/lib/supabase';
+
+const BASE_CURRENCY = 'USD';
 
 function getLocalDateISO() {
   const now = new Date();
@@ -28,6 +30,7 @@ export default function ExpensesScreen() {
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [currencyCode, setCurrencyCode] = useState(BASE_CURRENCY);
   const [selectedCat, setSelectedCat] = useState('');
   const [paidBy, setPaidBy] = useState('');
   const [splitType, setSplitType] = useState<SplitType>(
@@ -37,6 +40,7 @@ export default function ExpensesScreen() {
   function resetForm() {
     setName('');
     setAmount('');
+    setCurrencyCode(BASE_CURRENCY);
     setSelectedCat('');
     setPaidBy('');
     setSplitType(household?.default_split_type === 'percentage' ? 'percentage' : 'equal');
@@ -70,6 +74,7 @@ export default function ExpensesScreen() {
 
     await createExpense.mutateAsync({
       name, amount: amt, category_id: selectedCat,
+      currency_code: currencyCode,
       paid_by: paidBy, split_type: splitType, splits,
       date: getLocalDateISO(),
     });
@@ -107,7 +112,12 @@ export default function ExpensesScreen() {
                   <Text style={styles.rowTitle}>{exp.name}</Text>
                   <Text style={styles.rowSub}>{exp.date} · {cat?.name} · {payer?.name}</Text>
                 </View>
-                <Text style={styles.rowAmount}>{formatCurrency(exp.amount)}</Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.rowAmount}>{formatCurrency(exp.original_amount ?? exp.amount, exp.currency_code ?? BASE_CURRENCY)}</Text>
+                  {(exp.currency_code ?? BASE_CURRENCY) !== BASE_CURRENCY && (
+                    <Text style={styles.rowSub}>≈ {formatCurrency(exp.amount, BASE_CURRENCY)}</Text>
+                  )}
+                </View>
               </View>
             );
           })}
@@ -129,9 +139,24 @@ export default function ExpensesScreen() {
             <TextInput style={styles.input} value={name} onChangeText={setName}
               placeholder="e.g. Weekly groceries" placeholderTextColor="#9B9590" />
 
-            <FormLabel>Amount ($)</FormLabel>
+            <FormLabel>Amount</FormLabel>
             <TextInput style={styles.input} value={amount} onChangeText={setAmount}
               placeholder="0.00" placeholderTextColor="#9B9590" keyboardType="decimal-pad" />
+
+            <FormLabel>Currency</FormLabel>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillRow}>
+              {COMMON_CURRENCIES.map((currency) => (
+                <TouchableOpacity
+                  key={currency.code}
+                  style={[styles.pill, currencyCode === currency.code && styles.pillActive]}
+                  onPress={() => setCurrencyCode(currency.code)}
+                >
+                  <Text style={[styles.pillText, currencyCode === currency.code && styles.pillTextActive]}>
+                    {currency.code} {currency.symbol}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
 
             <FormLabel>Category</FormLabel>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillRow}>

@@ -4,8 +4,10 @@ import { FormEvent, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useExpensesAll, useCreateExpense, useDeleteExpense, useCategories, useMembers } from '@homebase/api';
 import { useUIStore } from '@homebase/store';
-import { calculateEqualSplits, calculatePercentageSplits, formatCurrency, formatRelativeDate } from '@homebase/utils';
+import { COMMON_CURRENCIES, calculateEqualSplits, calculatePercentageSplits, formatCurrency, formatRelativeDate, getCurrencyLabel } from '@homebase/utils';
 import type { Household, Member, SplitType } from '@homebase/types';
+
+const BASE_CURRENCY = 'USD';
 
 function getLocalDateInputValue() {
   const now = new Date();
@@ -77,7 +79,9 @@ const STYLES = `
   .exp-info { flex:1; min-width:0; }
   .exp-name { font-size:13px; font-weight:500; color:#D4D0CB; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .exp-meta { font-size:11px; color:#3D3935; margin-top:2px; }
+  .exp-amount-wrap { display:flex; flex-direction:column; align-items:flex-end; }
   .exp-amount { font-family:'Geist Mono',monospace; font-size:14px; font-weight:500; color:#A8A29E; flex-shrink:0; }
+  .exp-amount-sub { font-size:10px; color:#6B6560; margin-top:2px; }
   .exp-del { opacity:0; background:rgba(224,123,106,0.08); border:1px solid rgba(224,123,106,0.15); border-radius:6px; color:#E07B6A; font-size:12px; padding:4px 8px; cursor:pointer; font-family:'Geist',sans-serif; transition:all 0.15s; }
   .exp-del:hover { background:rgba(224,123,106,0.15); }
 
@@ -146,6 +150,7 @@ export function ExpensesPageClient({ household, member }: { household: Household
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [currencyCode, setCurrencyCode] = useState(BASE_CURRENCY);
   const [categoryId, setCategoryId] = useState('');
   const [paidBy, setPaidBy] = useState(member.id);
   const [date, setDate] = useState(getLocalDateInputValue());
@@ -210,10 +215,10 @@ export function ExpensesPageClient({ household, member }: { household: Household
           : calculateEqualSplits(parsed, members.map((m) => m.id));
 
       await createExpense.mutateAsync({
-        name, amount: parsed, category_id: categoryId, paid_by: paidBy,
+        name, amount: parsed, currency_code: currencyCode, category_id: categoryId, paid_by: paidBy,
         split_type: splitType, splits, date,
       });
-      setName(''); setAmount(''); setCategoryId(''); setPaidBy(member.id);
+      setName(''); setAmount(''); setCurrencyCode(BASE_CURRENCY); setCategoryId(''); setPaidBy(member.id);
       setDate(getLocalDateInputValue());
       setSplitType(household.default_split_type === 'percentage' ? 'percentage' : 'equal');
       setFilterCat('all');
@@ -282,11 +287,21 @@ export function ExpensesPageClient({ household, member }: { household: Household
                         <input className="fld-input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Weekly groceries" required />
                       </div>
                       <div className="fld">
-                        <label className="fld-label">Amount ($)</label>
+                        <label className="fld-label">Amount</label>
                         <input className="fld-input" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" type="number" min="0" step="0.01" required />
                       </div>
                     </div>
                     <div className="form-row">
+                      <div className="fld">
+                        <label className="fld-label">Currency</label>
+                        <select className="fld-input" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)}>
+                          {COMMON_CURRENCIES.map((currency) => (
+                            <option key={currency.code} value={currency.code}>
+                              {currency.code} {currency.symbol}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <div className="fld">
                         <label className="fld-label">Category</label>
                         <select className="fld-input" value={categoryId} onChange={e => setCategoryId(e.target.value)} required>
@@ -357,6 +372,8 @@ export function ExpensesPageClient({ household, member }: { household: Household
                   filtered.map(exp => {
                     const cat = categories.find(c => c.id === exp.category_id);
                     const payer = members.find(m => m.id === exp.paid_by);
+                    const sourceCurrency = exp.currency_code ?? BASE_CURRENCY;
+                    const sourceAmount = exp.original_amount ?? exp.amount;
                     return (
                       <div key={exp.id} className="exp-row">
                         <div className="exp-icon" style={{background:(cat?.color??'#6B6560')+'18'}}>{cat?.icon??'📦'}</div>
@@ -364,7 +381,10 @@ export function ExpensesPageClient({ household, member }: { household: Household
                           <div className="exp-name">{exp.name}</div>
                           <div className="exp-meta">{formatRelativeDate(exp.date)} · {cat?.name??'Uncategorized'} · {payer?.name}</div>
                         </div>
-                        <span className="exp-amount">{formatCurrency(exp.amount)}</span>
+                        <div className="exp-amount-wrap">
+                          <span className="exp-amount">{formatCurrency(sourceAmount, sourceCurrency)}</span>
+                          {sourceCurrency !== BASE_CURRENCY && <span className="exp-amount-sub">≈ {formatCurrency(exp.amount, BASE_CURRENCY)}</span>}
+                        </div>
                         <button className="exp-del" onClick={() => handleDelete(exp.id, exp.name)}>✕</button>
                       </div>
                     );

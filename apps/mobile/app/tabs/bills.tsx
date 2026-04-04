@@ -6,6 +6,8 @@ import { useBills, useToggleBillStatus } from '@homebase/api';
 import { formatCurrency, getDaysUntilDue } from '@homebase/utils';
 import { supabase } from '@/lib/supabase';
 
+const BASE_CURRENCY = 'USD';
+
 export default function BillsScreen() {
   const { household } = useAuthStore();
   const householdId = household?.id ?? '';
@@ -49,7 +51,12 @@ export default function BillsScreen() {
                           : `Due in ${daysLeft}d — ${bill.due_date}`}
                       </Text>
                     </View>
-                    <Text style={styles.rowAmount}>{formatCurrency(bill.amount)}</Text>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.rowAmount}>{formatCurrency(bill.original_amount ?? bill.amount, bill.currency_code ?? BASE_CURRENCY)}</Text>
+                      {(bill.currency_code ?? BASE_CURRENCY) !== BASE_CURRENCY && (
+                        <Text style={styles.rowSub}>≈ {formatCurrency(bill.amount, BASE_CURRENCY)}</Text>
+                      )}
+                    </View>
                     <TouchableOpacity
                       style={styles.toggle}
                       onPress={() => handleToggle(bill.id, bill.status)}
@@ -76,7 +83,12 @@ export default function BillsScreen() {
                       <Text style={[styles.rowTitle, styles.paidText]}>{bill.name}</Text>
                       <Text style={styles.rowSub}>Paid ✓</Text>
                     </View>
-                    <Text style={[styles.rowAmount, styles.paidText]}>{formatCurrency(bill.amount)}</Text>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={[styles.rowAmount, styles.paidText]}>{formatCurrency(bill.original_amount ?? bill.amount, bill.currency_code ?? BASE_CURRENCY)}</Text>
+                      {(bill.currency_code ?? BASE_CURRENCY) !== BASE_CURRENCY && (
+                        <Text style={styles.rowSub}>≈ {formatCurrency(bill.amount, BASE_CURRENCY)}</Text>
+                      )}
+                    </View>
                     <TouchableOpacity
                       style={[styles.toggle, styles.togglePaid]}
                       onPress={() => handleToggle(bill.id, bill.status)}

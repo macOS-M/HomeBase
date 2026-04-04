@@ -1,5 +1,6 @@
 import { AppShell } from '@/components/layout/AppShell';
 import { AuthHydrator } from '@/components/layout/AuthHydrator';
+import { GroceryListClient } from '@/components/grocery/GroceryListClient';
 import { createServerClient } from '@/lib/supabase/server';
 import { requireHouseholdContext } from '@/lib/household-context';
 import { formatCurrency } from '@homebase/utils';
@@ -34,50 +35,53 @@ export default async function GroceryPage() {
     .lte('date', endDate)
     .order('date', { ascending: false });
 
-  const spent = groceryExpenses.reduce((sum: number, expense: any) => sum + (expense.amount ?? 0), 0);
-  const budget = groceryCategory?.budget_limit ?? 0;
-  const remaining = Math.max(0, budget - spent);
+  const suggestions: string[] = Array.from(
+    new Set(
+      groceryExpenses
+        .map((expense: any) => String(expense.name ?? '').trim())
+        .filter(Boolean)
+    )
+  );
 
   return (
     <AppShell>
       <AuthHydrator member={member} household={household} />
-      <section className="p-8">
-        <h1 className="text-2xl font-semibold text-[#1A1714]">Grocery</h1>
-        <p className="text-sm text-[#6B6560] mt-1">Current month grocery budget</p>
+      <section className="min-h-screen bg-[#0E0F11] text-[#F0EDE8] p-8">
+        <h1 className="text-2xl font-semibold text-[#F0EDE8]">Grocery List</h1>
+        <p className="text-sm text-[#6B6560] mt-1">Track what your household needs to buy next.</p>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Metric label="Budget" value={formatCurrency(budget)} />
-          <Metric label="Spent" value={formatCurrency(spent)} />
-          <Metric label="Remaining" value={formatCurrency(remaining)} />
-        </div>
+        <div className="mt-6 grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-6 items-start">
+          <GroceryListClient
+            householdId={household.id}
+            suggestions={suggestions}
+            groceryCategoryId={groceryCategory?.id}
+            defaultSplitType={household.default_split_type === 'percentage' ? 'percentage' : 'equal'}
+            currentMemberId={member.id}
+          />
 
-        <div className="mt-6 bg-white rounded-xl border border-[#E8E2D9] overflow-hidden">
+          <div className="bg-[#161719] rounded-2xl border border-[rgba(255,255,255,0.06)] overflow-hidden">
+            <div className="px-4 py-3 border-b border-[rgba(255,255,255,0.05)]">
+              <h2 className="text-sm font-semibold text-[#F0EDE8]">Recent grocery purchases</h2>
+              <p className="text-xs text-[#6B6560] mt-0.5">From this month expenses</p>
+            </div>
           {groceryExpenses.length === 0 ? (
             <p className="p-6 text-sm text-[#6B6560]">No grocery expenses yet this month.</p>
           ) : (
-            <ul className="divide-y divide-[#EFE9E0]">
-              {groceryExpenses.map((expense: any) => (
+            <ul className="divide-y divide-[rgba(255,255,255,0.04)]">
+              {groceryExpenses.slice(0, 12).map((expense: any) => (
                 <li key={expense.id} className="p-4 flex items-center justify-between gap-4">
                   <div>
-                    <p className="font-medium text-[#1A1714]">{expense.name}</p>
+                    <p className="font-medium text-[#F0EDE8]">{expense.name}</p>
                     <p className="text-xs text-[#6B6560]">{expense.date}</p>
                   </div>
-                  <p className="font-semibold text-[#1A1714]">{formatCurrency(expense.amount)}</p>
+                  <p className="font-semibold text-[#C8C4BF]">{formatCurrency(expense.amount)}</p>
                 </li>
               ))}
             </ul>
           )}
+          </div>
         </div>
       </section>
     </AppShell>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-white rounded-xl border border-[#E8E2D9] p-4">
-      <p className="text-xs uppercase tracking-wide text-[#6B6560]">{label}</p>
-      <p className="text-xl font-semibold text-[#1A1714] mt-1">{value}</p>
-    </div>
   );
 }

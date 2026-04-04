@@ -41,6 +41,9 @@ export interface Expense {
   household_id: string;
   name: string;
   amount: number;
+  original_amount?: number;
+  currency_code?: string;
+  fx_rate?: number;
   source_type?: 'manual' | 'bill';
   source_bill_id?: string;
   category_id: string;
@@ -56,6 +59,7 @@ export interface Expense {
 export interface CreateExpenseInput {
   name: string;
   amount: number;
+  currency_code?: string;
   source_type?: 'manual' | 'bill';
   source_bill_id?: string;
   category_id: string;
@@ -72,6 +76,8 @@ export interface CreateExpenseInput {
 export interface Category {
   id: string;
   household_id: string;
+  source_type?: 'system' | 'custom';
+  system_category_id?: string;
   name: string;
   icon: string;
   color: string;
@@ -90,6 +96,9 @@ export interface Bill {
   name: string;
   icon: string;
   amount: number;
+  original_amount?: number;
+  currency_code?: string;
+  fx_rate?: number;
   due_date: string;
   status: BillStatus;
   recurring: RecurringInterval;
@@ -101,8 +110,25 @@ export interface CreateBillInput {
   name: string;
   icon: string;
   amount: number;
+  currency_code?: string;
   due_date: string;
   recurring: RecurringInterval;
+}
+
+// ─── Grocery List ────────────────────────────────────────────────────────────
+
+export type GroceryPriority = 'low' | 'medium' | 'high';
+
+export interface GroceryItem {
+  id: string;
+  household_id: string;
+  name: string;
+  quantity?: string;
+  notes?: string;
+  priority: GroceryPriority;
+  done: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 // ─── Balances & Settlements ───────────────────────────────────────────────────

@@ -3,8 +3,10 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useBills, useCreateBill, useDeleteBill, useToggleBillStatus } from '@homebase/api';
-import { formatCurrency, getDaysUntilDue } from '@homebase/utils';
+import { COMMON_CURRENCIES, formatCurrency, getDaysUntilDue } from '@homebase/utils';
 import type { Household } from '@homebase/types';
+
+const BASE_CURRENCY = 'USD';
 
 const STYLES = `
   .bp { flex:1; background:#0E0F11; min-height:100vh; font-family:'Geist',sans-serif; color:#F0EDE8; }
@@ -51,7 +53,9 @@ const STYLES = `
   .bill-info { flex:1; min-width:0; }
   .bill-name { font-size:13px; font-weight:500; color:#D4D0CB; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .bill-meta { font-size:11px; color:#3D3935; margin-top:2px; }
+  .bill-amount-wrap { display:flex; flex-direction:column; align-items:flex-end; }
   .bill-amount { font-family:'Geist Mono',monospace; font-size:14px; font-weight:500; color:#A8A29E; }
+  .bill-amount-sub { font-size:10px; color:#6B6560; margin-top:2px; }
   .bill-badge { font-size:10px; font-weight:600; padding:3px 8px; border-radius:20px; text-transform:uppercase; letter-spacing:0.3px; }
   .pending { background:rgba(232,160,32,0.12); color:#E8A020; }
   .paid { background:rgba(107,165,131,0.12); color:#6BA583; }
@@ -97,6 +101,7 @@ export function BillsPageClient({ household }: { household: Household }) {
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('📄');
   const [amount, setAmount] = useState('');
+  const [currencyCode, setCurrencyCode] = useState(BASE_CURRENCY);
   const [dueDate, setDueDate] = useState(getLocalDateInputValue());
   const [recurring, setRecurring] = useState<'monthly' | 'weekly' | 'yearly' | 'once'>('monthly');
   const [showForm, setShowForm] = useState(false);
@@ -140,12 +145,14 @@ export function BillsPageClient({ household }: { household: Household }) {
         name,
         icon,
         amount: parsed,
+        currency_code: currencyCode,
         due_date: dueDate,
         recurring,
       });
       setName('');
       setIcon('📄');
       setAmount('');
+      setCurrencyCode(BASE_CURRENCY);
       setDueDate(getLocalDateInputValue());
       setRecurring('monthly');
       setShowForm(false);
@@ -238,6 +245,16 @@ export function BillsPageClient({ household }: { household: Household }) {
                         <input className="fld-input" value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="0.01" required />
                       </div>
                       <div className="fld">
+                        <label className="fld-label">Currency</label>
+                        <select className="fld-input" value={currencyCode} onChange={(e) => setCurrencyCode(e.target.value)}>
+                          {COMMON_CURRENCIES.map((currency) => (
+                            <option key={currency.code} value={currency.code}>{currency.code} {currency.symbol}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="fld">
                         <label className="fld-label">Due date</label>
                         <input className="fld-input" value={dueDate} onChange={(e) => setDueDate(e.target.value)} type="date" required />
                       </div>
@@ -286,6 +303,8 @@ export function BillsPageClient({ household }: { household: Household }) {
                     const canPayCycle = bill.recurring === 'once' || daysLeft <= 7;
                     const canReopen = bill.status === 'paid' && bill.recurring === 'once';
                     const canChangeStatus = bill.status === 'paid' ? canReopen : canPayCycle;
+                    const sourceCurrency = bill.currency_code ?? BASE_CURRENCY;
+                    const sourceAmount = bill.original_amount ?? bill.amount;
                     const dueLabel =
                       daysLeft < 0
                         ? `${Math.abs(daysLeft)}d overdue`
@@ -303,7 +322,10 @@ export function BillsPageClient({ household }: { household: Household }) {
                             {bill.paid_at ? ` · Last paid ${new Date(bill.paid_at).toLocaleDateString()}` : ''}
                           </div>
                         </div>
-                        <span className="bill-amount">{formatCurrency(bill.amount)}</span>
+                        <div className="bill-amount-wrap">
+                          <span className="bill-amount">{formatCurrency(sourceAmount, sourceCurrency)}</span>
+                          {sourceCurrency !== BASE_CURRENCY && <span className="bill-amount-sub">≈ {formatCurrency(bill.amount, BASE_CURRENCY)}</span>}
+                        </div>
                         <span className={`bill-badge ${bill.status === 'paid' ? 'paid' : isOverdue ? 'overdue' : 'pending'}`}>
                           {bill.status === 'paid' ? 'Paid' : isOverdue ? 'Overdue' : 'Pending'}
                         </span>
@@ -344,6 +366,8 @@ export function BillsPageClient({ household }: { household: Household }) {
                   pendingBills.slice(0, 8).map((bill) => {
                     const daysLeft = getDaysUntilDue(bill.due_date);
                     const isOverdue = daysLeft < 0;
+                    const sourceCurrency = bill.currency_code ?? BASE_CURRENCY;
+                    const sourceAmount = bill.original_amount ?? bill.amount;
                     return (
                       <div key={bill.id} className={`bill-row${isOverdue ? ' overdue' : ''}`}>
                         <div className="bill-icon">{bill.icon}</div>
@@ -351,7 +375,10 @@ export function BillsPageClient({ household }: { household: Household }) {
                           <div className="bill-name">{bill.name}</div>
                           <div className="bill-meta">{isOverdue ? `${Math.abs(daysLeft)}d overdue` : daysLeft === 0 ? 'due today' : `${daysLeft}d left`}</div>
                         </div>
-                        <span className="bill-amount">{formatCurrency(bill.amount)}</span>
+                        <div className="bill-amount-wrap">
+                          <span className="bill-amount">{formatCurrency(sourceAmount, sourceCurrency)}</span>
+                          {sourceCurrency !== BASE_CURRENCY && <span className="bill-amount-sub">≈ {formatCurrency(bill.amount, BASE_CURRENCY)}</span>}
+                        </div>
                       </div>
                     );
                   })

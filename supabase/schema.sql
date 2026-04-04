@@ -106,15 +106,116 @@ create policy "Creator can update household"
   using (created_by = auth.uid());
 
 -- ─── Categories ──────────────────────────────────────────────────────────────
+create table if not exists system_categories (
+  id            uuid primary key default uuid_generate_v4(),
+  slug          text not null unique,
+  name          text not null,
+  icon          text not null default '📦',
+  color         text not null default '#6B6560',
+  default_budget_limit numeric(10,2),
+  is_grocery    boolean not null default false,
+  is_active     boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+insert into system_categories (slug, name, icon, color, default_budget_limit, is_grocery)
+values
+  ('rent',               'Rent',               '🏠', '#2B4C7E', null,   false),
+  ('groceries',          'Groceries',          '🛒', '#2D5F3F', 500.00, true),
+  ('utilities',          'Utilities',          '⚡', '#E8A020', 200.00, false),
+  ('internet',           'Internet',           '🌐', '#7B5EA7', 80.00,  false),
+  ('subscriptions',      'Subscriptions',      '📱', '#C84B31', 120.00, false),
+  ('household-supplies', 'Household Supplies', '🧹', '#5A8A6A', 100.00, false),
+  ('eating-out',         'Eating Out',         '🍽️', '#D4724E', 200.00, false),
+  ('health',             'Health',             '🏥', '#4A90A4', 150.00, false),
+  ('transport',          'Transport',          '🚗', '#8B7355', 200.00, false),
+  ('other',              'Other',              '📦', '#6B6560', null,   false)
+on conflict (slug) do update
+set
+  name = excluded.name,
+  icon = excluded.icon,
+  color = excluded.color,
+  default_budget_limit = excluded.default_budget_limit,
+  is_grocery = excluded.is_grocery,
+  is_active = true,
+  updated_at = now();
+
 create table categories (
   id            uuid primary key default uuid_generate_v4(),
   household_id  uuid not null references households(id) on delete cascade,
+  source_type   text not null default 'custom' check (source_type in ('system','custom')),
+  system_category_id uuid references system_categories(id) on delete set null,
   name          text not null,
   icon          text not null default '📦',
   color         text not null default '#6B6560',
   budget_limit  numeric(10,2),
-  is_grocery    boolean not null default false
+  is_grocery    boolean not null default false,
+  created_by    uuid references members(id) on delete set null
 );
+
+alter table categories add column if not exists source_type text not null default 'custom';
+alter table categories drop constraint if exists categories_source_type_check;
+alter table categories add constraint categories_source_type_check check (source_type in ('system','custom'));
+alter table categories add column if not exists system_category_id uuid references system_categories(id) on delete set null;
+alter table categories add column if not exists created_by uuid references members(id) on delete set null;
+
+update categories c
+set
+  source_type = 'system',
+  system_category_id = s.id
+from system_categories s
+where c.system_category_id is null
+  and lower(trim(c.name)) = lower(trim(s.name));
+
+create unique index if not exists categories_household_system_category_uidx
+  on categories (household_id, system_category_id)
+  where system_category_id is not null;
+
+create unique index if not exists categories_household_name_uidx
+  on categories (household_id, lower(trim(name)));
+
+create unique index if not exists categories_household_single_grocery_uidx
+  on categories (household_id)
+  where is_grocery = true;
+
+create or replace function enforce_custom_category_limit()
+returns trigger
+language plpgsql
+as $$
+declare
+  custom_count integer;
+begin
+  if new.source_type <> 'custom' then
+    return new;
+  end if;
+
+  if tg_op = 'UPDATE'
+     and old.source_type = 'custom'
+     and old.household_id = new.household_id then
+    return new;
+  end if;
+
+  select count(*)
+  into custom_count
+  from categories
+  where household_id = new.household_id
+    and source_type = 'custom';
+
+  if custom_count >= 20 then
+    raise exception 'Custom category limit reached (max 20 per household).';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_enforce_custom_category_limit on categories;
+create trigger trg_enforce_custom_category_limit
+before insert or update of source_type, household_id
+on categories
+for each row
+execute function enforce_custom_category_limit();
 
 alter table categories enable row level security;
 
@@ -126,12 +227,54 @@ create policy "Household members can manage categories"
 
 -- Seed default categories (called after household creation via function below)
 
+-- ─── Grocery Items (Shared Shopping List) ───────────────────────────────────
+create table if not exists grocery_items (
+  id            uuid primary key default uuid_generate_v4(),
+  household_id  uuid not null references households(id) on delete cascade,
+  name          text not null,
+  quantity      text,
+  notes         text,
+  priority      text not null default 'medium' check (priority in ('low','medium','high')),
+  done          boolean not null default false,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+alter table grocery_items add column if not exists household_id uuid references households(id) on delete cascade;
+alter table grocery_items add column if not exists name text;
+alter table grocery_items add column if not exists quantity text;
+alter table grocery_items add column if not exists notes text;
+alter table grocery_items add column if not exists priority text not null default 'medium';
+alter table grocery_items add column if not exists done boolean not null default false;
+alter table grocery_items add column if not exists created_at timestamptz not null default now();
+alter table grocery_items add column if not exists updated_at timestamptz not null default now();
+
+alter table grocery_items alter column household_id set not null;
+alter table grocery_items alter column name set not null;
+alter table grocery_items drop constraint if exists grocery_items_priority_check;
+alter table grocery_items add constraint grocery_items_priority_check check (priority in ('low','medium','high'));
+
+alter table grocery_items enable row level security;
+
+drop policy if exists "Household members can manage grocery list" on grocery_items;
+create policy "Household members can manage grocery list"
+  on grocery_items for all
+  using (
+    is_household_member(household_id)
+  )
+  with check (
+    is_household_member(household_id)
+  );
+
 -- ─── Expenses ────────────────────────────────────────────────────────────────
 create table expenses (
   id            uuid primary key default uuid_generate_v4(),
   household_id  uuid not null references households(id) on delete cascade,
   name          text not null,
   amount        numeric(10,2) not null check (amount > 0),
+  original_amount numeric(10,2),
+  currency_code text not null default 'USD',
+  fx_rate       numeric(14,8) not null default 1,
   source_type   text not null default 'manual' check (source_type in ('manual','bill')),
   source_bill_id uuid references bills(id) on delete set null,
   category_id   uuid references categories(id) on delete set null,
@@ -147,6 +290,13 @@ alter table expenses add column if not exists source_type text not null default 
 alter table expenses drop constraint if exists expenses_source_type_check;
 alter table expenses add constraint expenses_source_type_check check (source_type in ('manual','bill'));
 alter table expenses add column if not exists source_bill_id uuid references bills(id) on delete set null;
+alter table expenses add column if not exists original_amount numeric(10,2);
+alter table expenses add column if not exists currency_code text not null default 'USD';
+alter table expenses add column if not exists fx_rate numeric(14,8) not null default 1;
+update expenses set original_amount = amount where original_amount is null;
+alter table expenses alter column original_amount set not null;
+alter table expenses drop constraint if exists expenses_currency_code_check;
+alter table expenses add constraint expenses_currency_code_check check (currency_code ~ '^[A-Z]{3}$');
 
 alter table expenses enable row level security;
 
@@ -184,12 +334,23 @@ create table bills (
   name          text not null,
   icon          text not null default '📄',
   amount        numeric(10,2) not null check (amount > 0),
+  original_amount numeric(10,2),
+  currency_code text not null default 'USD',
+  fx_rate       numeric(14,8) not null default 1,
   due_date      date not null,
   status        text not null default 'pending' check (status in ('paid','pending','overdue')),
   recurring     text not null default 'monthly' check (recurring in ('monthly','weekly','yearly','once')),
   paid_at       timestamptz,
   created_at    timestamptz not null default now()
 );
+
+alter table bills add column if not exists original_amount numeric(10,2);
+alter table bills add column if not exists currency_code text not null default 'USD';
+alter table bills add column if not exists fx_rate numeric(14,8) not null default 1;
+update bills set original_amount = amount where original_amount is null;
+alter table bills alter column original_amount set not null;
+alter table bills drop constraint if exists bills_currency_code_check;
+alter table bills add constraint bills_currency_code_check check (currency_code ~ '^[A-Z]{3}$');
 
 alter table bills enable row level security;
 
@@ -248,17 +409,33 @@ create policy "Household members can manage wallet"
 create or replace function seed_default_categories(p_household_id uuid)
 returns void language plpgsql as $$
 begin
-  insert into categories (household_id, name, icon, color, budget_limit, is_grocery) values
-    (p_household_id, 'Rent',               '🏠', '#2B4C7E', null,   false),
-    (p_household_id, 'Groceries',          '🛒', '#2D5F3F', 500.00, true),
-    (p_household_id, 'Utilities',          '⚡', '#E8A020', 200.00, false),
-    (p_household_id, 'Internet',           '🌐', '#7B5EA7', 80.00,  false),
-    (p_household_id, 'Subscriptions',      '📱', '#C84B31', 120.00, false),
-    (p_household_id, 'Household Supplies', '🧹', '#5A8A6A', 100.00, false),
-    (p_household_id, 'Eating Out',         '🍽️', '#D4724E', 200.00, false),
-    (p_household_id, 'Health',             '🏥', '#4A90A4', 150.00, false),
-    (p_household_id, 'Transport',          '🚗', '#8B7355', 200.00, false),
-    (p_household_id, 'Other',              '📦', '#6B6560', null,   false);
+  insert into categories (
+    household_id,
+    source_type,
+    system_category_id,
+    name,
+    icon,
+    color,
+    budget_limit,
+    is_grocery
+  )
+  select
+    p_household_id,
+    'system',
+    s.id,
+    s.name,
+    s.icon,
+    s.color,
+    s.default_budget_limit,
+    s.is_grocery
+  from system_categories s
+  where s.is_active = true
+    and not exists (
+      select 1
+      from categories c
+      where c.household_id = p_household_id
+        and c.system_category_id = s.id
+    );
 end;
 $$;
 

@@ -127,10 +127,156 @@ export function formatCurrency(
   currency = 'USD',
   locale = 'en-US'
 ): string {
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency,
-  }).format(amount);
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toFixed(2)}`;
+  }
+}
+
+// ─── Currency Conversion ─────────────────────────────────────────────────────
+
+export const COMMON_CURRENCIES = [
+  { code: 'USD', symbol: '$', name: 'US Dollar' },
+  { code: 'EUR', symbol: '€', name: 'Euro' },
+  { code: 'GBP', symbol: '£', name: 'British Pound' },
+  { code: 'CAD', symbol: 'C$', name: 'Canadian Dollar' },
+  { code: 'AUD', symbol: 'A$', name: 'Australian Dollar' },
+  { code: 'NZD', symbol: 'NZ$', name: 'New Zealand Dollar' },
+  { code: 'JPY', symbol: '¥', name: 'Japanese Yen' },
+  { code: 'CNY', symbol: '¥', name: 'Chinese Yuan' },
+  { code: 'INR', symbol: '₹', name: 'Indian Rupee' },
+  { code: 'MXN', symbol: 'MX$', name: 'Mexican Peso' },
+  { code: 'BRL', symbol: 'R$', name: 'Brazilian Real' },
+  { code: 'CRC', symbol: '₡', name: 'Costa Rican Colón' },
+  { code: 'CHF', symbol: 'CHF', name: 'Swiss Franc' },
+  { code: 'SEK', symbol: 'kr', name: 'Swedish Krona' },
+  { code: 'NOK', symbol: 'kr', name: 'Norwegian Krone' },
+  { code: 'DKK', symbol: 'kr', name: 'Danish Krone' },
+  { code: 'PLN', symbol: 'zł', name: 'Polish Złoty' },
+  { code: 'SGD', symbol: 'S$', name: 'Singapore Dollar' },
+  { code: 'HKD', symbol: 'HK$', name: 'Hong Kong Dollar' },
+  { code: 'ZAR', symbol: 'R', name: 'South African Rand' },
+  { code: 'AED', symbol: 'د.إ', name: 'UAE Dirham' },
+] as const;
+
+export function getCurrencyLabel(code: string): string {
+  const currency = COMMON_CURRENCIES.find((item) => item.code === code.toUpperCase());
+  if (!currency) return code.toUpperCase();
+  return `${currency.code} ${currency.symbol}`;
+}
+
+const FX_TTL_MS = 30 * 60 * 1000;
+const fxCache = new Map<string, { rate: number; expiresAt: number }>();
+
+function fxKey(base: string, quote: string) {
+  return `${base}->${quote}`;
+}
+
+function getExchangerateHostAccessKey(): string | undefined {
+  return (
+    process.env.NEXT_PUBLIC_EXCHANGERATE_HOST_ACCESS_KEY ||
+    process.env.EXPO_PUBLIC_EXCHANGERATE_HOST_ACCESS_KEY ||
+    process.env.EXCHANGERATE_HOST_ACCESS_KEY
+  );
+}
+
+async function fetchRatesFromExchangerateHost(base: string, symbols: string[]) {
+  const accessKey = getExchangerateHostAccessKey();
+  const query = new URLSearchParams({
+    base,
+    symbols: symbols.join(','),
+  });
+
+  if (accessKey) {
+    query.set('access_key', accessKey);
+  }
+
+  const response = await fetch(`https://api.exchangerate.host/latest?${query.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Currency conversion failed (${response.status}).`);
+  }
+
+  const payload = await response.json();
+  const rates = payload?.rates as Record<string, number> | undefined;
+
+  if (payload?.success === false || !rates || typeof rates !== 'object') {
+    const errorType = payload?.error?.type as string | undefined;
+    const errorCode = payload?.error?.code as number | undefined;
+    const isAccessKeyProblem = errorType === 'missing_access_key' || errorCode === 101;
+    if (!isAccessKeyProblem) {
+      throw new Error(payload?.error?.info ?? 'Currency conversion failed: invalid response.');
+    }
+    return null;
+  }
+
+  return rates;
+}
+
+async function fetchRatesFromOpenERApi(base: string) {
+  const response = await fetch(`https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`);
+  if (!response.ok) {
+    throw new Error(`Currency conversion failed (${response.status}).`);
+  }
+
+  const payload = await response.json();
+  const rates = payload?.rates as Record<string, number> | undefined;
+  if (!rates || typeof rates !== 'object') {
+    throw new Error('Currency conversion failed: invalid fallback response.');
+  }
+
+  return rates;
+}
+
+export async function getExchangeRates(baseCurrency: string, quoteCurrencies: string[]): Promise<Record<string, number>> {
+  const base = baseCurrency.toUpperCase();
+  const quotes = Array.from(new Set(quoteCurrencies.map((c) => c.toUpperCase()).filter((c) => c !== base)));
+
+  const now = Date.now();
+  const rates: Record<string, number> = { [base]: 1 };
+  const missing: string[] = [];
+
+  for (const quote of quotes) {
+    const cached = fxCache.get(fxKey(base, quote));
+    if (cached && cached.expiresAt > now) {
+      rates[quote] = cached.rate;
+      continue;
+    }
+    missing.push(quote);
+  }
+
+  if (missing.length > 0) {
+    const fetchedRates = (await fetchRatesFromExchangerateHost(base, missing)) ?? (await fetchRatesFromOpenERApi(base));
+
+    for (const quote of missing) {
+      const rate = Number(fetchedRates[quote]);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        throw new Error(`Currency conversion rate not available for ${base}/${quote}.`);
+      }
+      rates[quote] = rate;
+      fxCache.set(fxKey(base, quote), { rate, expiresAt: now + FX_TTL_MS });
+    }
+  }
+
+  return rates;
+}
+
+export async function convertCurrency(amount: number, fromCurrency: string, toCurrency: string) {
+  const from = fromCurrency.toUpperCase();
+  const to = toCurrency.toUpperCase();
+
+  if (from === to) {
+    return { convertedAmount: Math.round(amount * 100) / 100, rate: 1 };
+  }
+
+  const rates = await getExchangeRates(from, [to]);
+  const rate = rates[to];
+  const convertedAmount = Math.round(amount * rate * 100) / 100;
+
+  return { convertedAmount, rate };
 }
 
 export function formatDate(dateStr: string): string {

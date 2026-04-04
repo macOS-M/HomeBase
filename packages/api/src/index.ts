@@ -4,12 +4,14 @@ import {
   calculateSmartSettlements,
   calculateEqualSplits,
   calculatePercentageSplits,
+  convertCurrency,
 } from '@homebase/utils';
 import type {
   Expense,
   CreateExpenseInput,
   Bill,
   CreateBillInput,
+  GroceryItem,
   Category,
   Member,
   Balance,
@@ -21,6 +23,35 @@ import type {
 // The supabase client is injected so both web and mobile can pass their own
 // platform-specific instance without this package depending on a specific env.
 type SupabaseClient = any;
+const HOUSEHOLD_BASE_CURRENCY = 'USD';
+
+function scaleSplitsToTotal(
+  splits: { member_id: string; amount: number; percentage?: number }[],
+  originalTotal: number,
+  convertedTotal: number
+) {
+  if (splits.length === 0) return splits;
+  if (!Number.isFinite(originalTotal) || originalTotal <= 0 || Math.abs(originalTotal - convertedTotal) < 0.005) {
+    return splits;
+  }
+
+  const ratio = convertedTotal / originalTotal;
+  const scaled = splits.map((split) => ({
+    ...split,
+    amount: Math.round(split.amount * ratio * 100) / 100,
+  }));
+
+  const scaledSum = scaled.reduce((sum, split) => sum + split.amount, 0);
+  const delta = Math.round((convertedTotal - scaledSum) * 100) / 100;
+  if (Math.abs(delta) >= 0.01) {
+    scaled[0] = {
+      ...scaled[0],
+      amount: Math.round((scaled[0].amount + delta) * 100) / 100,
+    };
+  }
+
+  return scaled;
+}
 
 function toLocalISODate(input: Date) {
   const offsetMs = input.getTimezoneOffset() * 60 * 1000;
@@ -40,6 +71,7 @@ export const queryKeys = {
   categories: (householdId: string) => ['categories', householdId] as const,
   bills: (householdId: string) => ['bills', householdId] as const,
   members: (householdId: string) => ['members', householdId] as const,
+  groceryItems: (householdId: string) => ['grocery-items', householdId] as const,
   balances: (householdId: string, month: string) =>
     ['balances', householdId, month] as const,
   wallet: (householdId: string) => ['wallet', householdId] as const,
@@ -103,16 +135,32 @@ export function useCreateExpense(
   return useMutation({
     mutationFn: async (input: CreateExpenseInput): Promise<Expense> => {
       const { splits, ...expenseData } = input;
+      const inputAmount = Number(input.amount);
+      const inputCurrency = (input.currency_code ?? HOUSEHOLD_BASE_CURRENCY).toUpperCase();
+      const { convertedAmount, rate } = await convertCurrency(
+        inputAmount,
+        inputCurrency,
+        HOUSEHOLD_BASE_CURRENCY
+      );
+
+      const scaledSplits = scaleSplitsToTotal(splits, inputAmount, convertedAmount);
 
       const { data: expense, error: expenseError } = await supabase
         .from('expenses')
-        .insert({ ...expenseData, household_id: householdId })
+        .insert({
+          ...expenseData,
+          amount: convertedAmount,
+          original_amount: inputAmount,
+          currency_code: inputCurrency,
+          fx_rate: rate,
+          household_id: householdId,
+        })
         .select()
         .single();
 
       if (expenseError) throw expenseError;
 
-      const splitRows = splits.map((s) => ({
+      const splitRows = scaledSplits.map((s) => ({
         ...s,
         expense_id: expense.id,
         is_settled: false,
@@ -198,9 +246,25 @@ export function useCreateBill(supabase: SupabaseClient, householdId: string) {
 
   return useMutation({
     mutationFn: async (input: CreateBillInput): Promise<Bill> => {
+      const inputAmount = Number(input.amount);
+      const inputCurrency = (input.currency_code ?? HOUSEHOLD_BASE_CURRENCY).toUpperCase();
+      const { convertedAmount, rate } = await convertCurrency(
+        inputAmount,
+        inputCurrency,
+        HOUSEHOLD_BASE_CURRENCY
+      );
+
       const { data, error } = await supabase
         .from('bills')
-        .insert({ ...input, household_id: householdId, status: 'pending' })
+        .insert({
+          ...input,
+          amount: convertedAmount,
+          original_amount: inputAmount,
+          currency_code: inputCurrency,
+          fx_rate: rate,
+          household_id: householdId,
+          status: 'pending',
+        })
         .select()
         .single();
       if (error) throw error;
@@ -289,6 +353,9 @@ export function useToggleBillStatus(
       id: string;
       name: string;
       amount: number;
+      original_amount?: number;
+      currency_code?: string;
+      fx_rate?: number;
       due_date: string;
     };
   }) {
@@ -354,6 +421,9 @@ export function useToggleBillStatus(
         household_id: householdId,
         name: params.bill.name,
         amount,
+        original_amount: params.bill.original_amount ?? amount,
+        currency_code: params.bill.currency_code ?? HOUSEHOLD_BASE_CURRENCY,
+        fx_rate: params.bill.fx_rate ?? 1,
         source_type: 'bill',
         source_bill_id: params.bill.id,
         category_id: null,
@@ -396,7 +466,7 @@ export function useToggleBillStatus(
     }) => {
       const { data: bill, error: billError } = await supabase
         .from('bills')
-        .select('id, household_id, name, icon, amount, recurring, due_date, status')
+        .select('id, household_id, name, icon, amount, original_amount, currency_code, fx_rate, recurring, due_date, status')
         .eq('id', billId)
         .eq('household_id', householdId)
         .single();
@@ -436,6 +506,14 @@ export function useToggleBillStatus(
 
         const nextDueDate = addRecurringInterval(bill.due_date, bill.recurring);
         const paidAt = new Date().toISOString();
+        const baseCurrency = HOUSEHOLD_BASE_CURRENCY;
+        const billOriginalAmount = bill.original_amount ?? bill.amount;
+        const billCurrency = (bill.currency_code ?? baseCurrency).toUpperCase();
+        const { convertedAmount: nextCycleAmount, rate: nextCycleRate } = await convertCurrency(
+          billOriginalAmount,
+          billCurrency,
+          baseCurrency
+        );
 
         const { error: markPaidError } = await supabase
           .from('bills')
@@ -465,7 +543,10 @@ export function useToggleBillStatus(
             household_id: householdId,
             name: bill.name,
             icon: bill.icon,
-            amount: bill.amount,
+            amount: nextCycleAmount,
+            original_amount: billOriginalAmount,
+            currency_code: billCurrency,
+            fx_rate: nextCycleRate,
             due_date: nextDueDate,
             status: 'pending',
             recurring: bill.recurring,
@@ -515,6 +596,105 @@ export function useToggleBillStatus(
       queryClient.invalidateQueries({ queryKey: ['expenses-all', householdId] });
       queryClient.invalidateQueries({ queryKey: ['expenses', householdId] });
       queryClient.invalidateQueries({ queryKey: ['balances', householdId] });
+    },
+  });
+}
+
+// ─── Grocery List ────────────────────────────────────────────────────────────
+
+export function useGroceryItems(supabase: SupabaseClient, householdId: string) {
+  return useQuery({
+    queryKey: queryKeys.groceryItems(householdId),
+    queryFn: async (): Promise<GroceryItem[]> => {
+      const { data, error } = await supabase
+        .from('grocery_items')
+        .select('*')
+        .eq('household_id', householdId)
+        .order('done', { ascending: true })
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!householdId,
+  });
+}
+
+export function useCreateGroceryItem(supabase: SupabaseClient, householdId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      name: string;
+      quantity?: string;
+      notes?: string;
+      priority: 'low' | 'medium' | 'high';
+    }) => {
+      const { error } = await supabase.from('grocery_items').insert({
+        household_id: householdId,
+        name: input.name,
+        quantity: input.quantity ?? null,
+        notes: input.notes ?? null,
+        priority: input.priority,
+        done: false,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groceryItems(householdId) });
+    },
+  });
+}
+
+export function useToggleGroceryItemDone(supabase: SupabaseClient, householdId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ itemId, done }: { itemId: string; done: boolean }) => {
+      const { error } = await supabase
+        .from('grocery_items')
+        .update({ done, updated_at: new Date().toISOString() })
+        .eq('id', itemId)
+        .eq('household_id', householdId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groceryItems(householdId) });
+    },
+  });
+}
+
+export function useDeleteGroceryItem(supabase: SupabaseClient, householdId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (itemId: string) => {
+      const { error } = await supabase
+        .from('grocery_items')
+        .delete()
+        .eq('id', itemId)
+        .eq('household_id', householdId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groceryItems(householdId) });
+    },
+  });
+}
+
+export function useClearDoneGroceryItems(supabase: SupabaseClient, householdId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('grocery_items')
+        .delete()
+        .eq('household_id', householdId)
+        .eq('done', true);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groceryItems(householdId) });
     },
   });
 }
