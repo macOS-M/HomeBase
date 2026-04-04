@@ -55,25 +55,31 @@ export default function LoginPage() {
     window.location.href = '/dashboard';
   }
 
-  async function handleGoogle() {
-    setError('');
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: getCallbackUrl('/dashboard') },
-    });
+async function handleGoogle() {
+  setError('');
 
-    if (error) {
-      const message = error.message?.toLowerCase() ?? '';
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: getCallbackUrl('/dashboard'),
+      queryParams: {
+        prompt: 'select_account',
+      },
+    },
+  });
 
-      if (message.includes('provider is not enabled')) {
-        setError('Google sign-in is not enabled for this project yet. Use email magic link or enable Google in Supabase Auth Providers.');
-      } else if (message.includes('missing oauth secret')) {
-        setError('Google sign-in is missing its OAuth client secret in Supabase. Add the Google Client ID and Client Secret in Supabase Auth Providers.');
-      } else {
-        setError(error.message);
-      }
+  if (error) {
+    const message = error.message?.toLowerCase() ?? '';
+
+    if (message.includes('provider is not enabled')) {
+      setError('Google sign-in is not enabled for this project yet. Use email magic link or enable Google in Supabase Auth Providers.');
+    } else if (message.includes('missing oauth secret')) {
+      setError('Google sign-in is missing its OAuth client secret in Supabase. Add the Google Client ID and Client Secret in Supabase Auth Providers.');
+    } else {
+      setError(error.message);
     }
   }
+}
 
   return (
     <div className="min-h-[100dvh] bg-[#F5F2EC] flex items-center justify-center px-4">
