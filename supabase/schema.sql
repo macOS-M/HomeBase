@@ -266,6 +266,49 @@ create policy "Household members can manage grocery list"
     is_household_member(household_id)
   );
 
+-- ─── Household Todo Items (Shared Task List) ───────────────────────────────
+create table if not exists todo_items (
+  id            uuid primary key default uuid_generate_v4(),
+  household_id  uuid not null references households(id) on delete cascade,
+  title         text not null,
+  notes         text,
+  priority      text not null default 'medium' check (priority in ('low','medium','high')),
+  due_date      date,
+  assigned_to   uuid references members(id) on delete set null,
+  created_by    uuid references members(id) on delete set null,
+  done          boolean not null default false,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+alter table todo_items add column if not exists household_id uuid references households(id) on delete cascade;
+alter table todo_items add column if not exists title text;
+alter table todo_items add column if not exists notes text;
+alter table todo_items add column if not exists priority text not null default 'medium';
+alter table todo_items add column if not exists due_date date;
+alter table todo_items add column if not exists assigned_to uuid references members(id) on delete set null;
+alter table todo_items add column if not exists created_by uuid references members(id) on delete set null;
+alter table todo_items add column if not exists done boolean not null default false;
+alter table todo_items add column if not exists created_at timestamptz not null default now();
+alter table todo_items add column if not exists updated_at timestamptz not null default now();
+
+alter table todo_items alter column household_id set not null;
+alter table todo_items alter column title set not null;
+alter table todo_items drop constraint if exists todo_items_priority_check;
+alter table todo_items add constraint todo_items_priority_check check (priority in ('low','medium','high'));
+
+alter table todo_items enable row level security;
+
+drop policy if exists "Household members can manage todo list" on todo_items;
+create policy "Household members can manage todo list"
+  on todo_items for all
+  using (
+    is_household_member(household_id)
+  )
+  with check (
+    is_household_member(household_id)
+  );
+
 -- ─── Expenses ────────────────────────────────────────────────────────────────
 create table expenses (
   id            uuid primary key default uuid_generate_v4(),
@@ -282,6 +325,7 @@ create table expenses (
   split_type    text not null default 'equal' check (split_type in ('equal','percentage','assigned')),
   date          date not null default current_date,
   receipt_url   text,
+  receipt_items jsonb,
   notes         text,
   created_at    timestamptz not null default now()
 );
@@ -293,6 +337,7 @@ alter table expenses add column if not exists source_bill_id uuid references bil
 alter table expenses add column if not exists original_amount numeric(10,2);
 alter table expenses add column if not exists currency_code text not null default 'USD';
 alter table expenses add column if not exists fx_rate numeric(14,8) not null default 1;
+alter table expenses add column if not exists receipt_items jsonb;
 update expenses set original_amount = amount where original_amount is null;
 alter table expenses alter column original_amount set not null;
 alter table expenses drop constraint if exists expenses_currency_code_check;

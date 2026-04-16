@@ -36,6 +36,13 @@ export interface ExpenseSplit {
   is_settled: boolean;
 }
 
+export interface ExpenseReceiptItem {
+  name: string;
+  cost?: number;
+  quantity?: string;
+  notes?: string;
+}
+
 export interface Expense {
   id: string;
   household_id: string;
@@ -52,6 +59,7 @@ export interface Expense {
   splits: ExpenseSplit[];
   date: string;
   receipt_url?: string;
+  receipt_items?: ExpenseReceiptItem[];
   notes?: string;
   created_at: string;
 }
@@ -68,6 +76,7 @@ export interface CreateExpenseInput {
   splits: Omit<ExpenseSplit, 'is_settled'>[];
   date: string;
   receipt_url?: string;
+  receipt_items?: ExpenseReceiptItem[];
   notes?: string;
 }
 
@@ -126,6 +135,24 @@ export interface GroceryItem {
   quantity?: string;
   notes?: string;
   priority: GroceryPriority;
+  done: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Household Todo List ─────────────────────────────────────────────────────
+
+export type TodoPriority = 'low' | 'medium' | 'high';
+
+export interface TodoItem {
+  id: string;
+  household_id: string;
+  title: string;
+  notes?: string;
+  priority: TodoPriority;
+  due_date?: string;
+  assigned_to?: string;
+  created_by?: string;
   done: boolean;
   created_at: string;
   updated_at: string;

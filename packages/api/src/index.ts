@@ -12,6 +12,7 @@ import type {
   Bill,
   CreateBillInput,
   GroceryItem,
+  TodoItem,
   Category,
   Member,
   Balance,
@@ -72,6 +73,7 @@ export const queryKeys = {
   bills: (householdId: string) => ['bills', householdId] as const,
   members: (householdId: string) => ['members', householdId] as const,
   groceryItems: (householdId: string) => ['grocery-items', householdId] as const,
+  todoItems: (householdId: string) => ['todo-items', householdId] as const,
   balances: (householdId: string, month: string) =>
     ['balances', householdId, month] as const,
   wallet: (householdId: string) => ['wallet', householdId] as const,
@@ -695,6 +697,110 @@ export function useClearDoneGroceryItems(supabase: SupabaseClient, householdId: 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groceryItems(householdId) });
+    },
+  });
+}
+
+// ─── Household Todo List ─────────────────────────────────────────────────────
+
+export function useTodoItems(supabase: SupabaseClient, householdId: string) {
+  return useQuery({
+    queryKey: queryKeys.todoItems(householdId),
+    queryFn: async (): Promise<TodoItem[]> => {
+      const { data, error } = await supabase
+        .from('todo_items')
+        .select('*')
+        .eq('household_id', householdId)
+        .order('done', { ascending: true })
+        .order('priority', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!householdId,
+  });
+}
+
+export function useCreateTodoItem(supabase: SupabaseClient, householdId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      title: string;
+      notes?: string;
+      priority: 'low' | 'medium' | 'high';
+      due_date?: string;
+      assigned_to?: string;
+      created_by?: string;
+    }) => {
+      const { error } = await supabase.from('todo_items').insert({
+        household_id: householdId,
+        title: input.title,
+        notes: input.notes ?? null,
+        priority: input.priority,
+        due_date: input.due_date ?? null,
+        assigned_to: input.assigned_to ?? null,
+        created_by: input.created_by ?? null,
+        done: false,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.todoItems(householdId) });
+    },
+  });
+}
+
+export function useToggleTodoItemDone(supabase: SupabaseClient, householdId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ itemId, done }: { itemId: string; done: boolean }) => {
+      const { error } = await supabase
+        .from('todo_items')
+        .update({ done, updated_at: new Date().toISOString() })
+        .eq('id', itemId)
+        .eq('household_id', householdId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.todoItems(householdId) });
+    },
+  });
+}
+
+export function useDeleteTodoItem(supabase: SupabaseClient, householdId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (itemId: string) => {
+      const { error } = await supabase
+        .from('todo_items')
+        .delete()
+        .eq('id', itemId)
+        .eq('household_id', householdId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.todoItems(householdId) });
+    },
+  });
+}
+
+export function useClearDoneTodoItems(supabase: SupabaseClient, householdId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('todo_items')
+        .delete()
+        .eq('household_id', householdId)
+        .eq('done', true);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.todoItems(householdId) });
     },
   });
 }

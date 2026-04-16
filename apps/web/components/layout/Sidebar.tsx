@@ -10,6 +10,7 @@ const navItems = [
   { href: '/expenses',    icon: '📋', label: 'Expenses'     },
   { href: '/categories',  icon: '🏷️', label: 'Categories'   },
   { href: '/grocery',     icon: '🛒', label: 'Grocery'      },
+  { href: '/todos',       icon: '✅', label: 'Todo List'    },
   { href: '/bills',       icon: '⚡', label: 'Bills'        },
   { href: '/balances',    icon: '⚖️', label: 'Balances'     },
   { href: '/wallet',      icon: '💰', label: 'Wallet'       },
@@ -20,8 +21,8 @@ const navItems = [
 const mobileNavItems = [
   { href: '/dashboard', icon: '🏠', label: 'Home' },
   { href: '/expenses', icon: '📋', label: 'Expenses' },
+  { href: '/todos', icon: '✅', label: 'Todos' },
   { href: '/bills', icon: '⚡', label: 'Bills' },
-  { href: '/balances', icon: '⚖️', label: 'Balances' },
   { href: '/settings', icon: '⚙️', label: 'Settings' },
 ];
 
@@ -98,12 +99,12 @@ export function Sidebar() {
         ))}
 
         <p className="text-[10px] uppercase tracking-widest text-white/25 px-6 pt-5 pb-1.5 font-semibold">Budget</p>
-        {navItems.slice(2, 4).map((item) => (
+        {navItems.slice(2, 5).map((item) => (
           <NavItem key={item.href} {...item} active={pathname === item.href} />
         ))}
 
         <p className="text-[10px] uppercase tracking-widest text-white/25 px-6 pt-5 pb-1.5 font-semibold">Bills & Money</p>
-        {navItems.slice(4, 7).map((item) => (
+        {navItems.slice(5, 8).map((item) => (
           <NavItem key={item.href} {...item} active={pathname === item.href} />
         ))}
 

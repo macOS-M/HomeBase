@@ -179,6 +179,12 @@ export function GroceryListClient({
       .join(', ')
       .slice(0, 4000);
 
+    const receiptItems = doneItems.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      notes: item.notes,
+    }));
+
     const { splitType, splits } = buildSplits(parsedAmount);
     if (splits.length === 0) {
       setActionError('No members available for splits.');
@@ -195,6 +201,7 @@ export function GroceryListClient({
         split_type: splitType,
         splits,
         date: getLocalISODate(),
+        receipt_items: receiptItems,
         notes: `Bought items: ${itemSummary}`,
       });
       await clearDoneItems.mutateAsync();
@@ -219,7 +226,7 @@ export function GroceryListClient({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Add item (e.g. Eggs)"
+            placeholder="Add item"
             className="md:col-span-2 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] text-[#F0EDE8] placeholder:text-[#6B6560] px-3 py-2 text-sm outline-none focus:border-[rgba(201,168,76,0.45)]"
             required
           />
