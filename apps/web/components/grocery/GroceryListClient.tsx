@@ -34,12 +34,14 @@ export function GroceryListClient({
   groceryCategoryId,
   defaultSplitType,
   currentMemberId,
+  baseCurrency,
 }: {
   householdId: string;
   suggestions: string[];
   groceryCategoryId?: string;
   defaultSplitType: 'equal' | 'percentage';
   currentMemberId: string;
+  baseCurrency: string;
 }) {
   const supabase = createClient();
   const { data: items = [], isLoading, error } = useGroceryItems(supabase, householdId);
@@ -59,7 +61,7 @@ export function GroceryListClient({
   const [showConvertForm, setShowConvertForm] = useState(false);
   const [convertAmount, setConvertAmount] = useState('');
   const [convertPaidBy, setConvertPaidBy] = useState(currentMemberId);
-  const [convertCurrencyCode, setConvertCurrencyCode] = useState('USD');
+  const [convertCurrencyCode, setConvertCurrencyCode] = useState(baseCurrency);
 
   const filteredItems = useMemo(() => {
     if (filter === 'all') return items;
@@ -77,15 +79,15 @@ export function GroceryListClient({
       return { splitType: 'equal' as const, splits: [] as ReturnType<typeof calculateEqualSplits> };
     }
     if (splitType === 'percentage') {
-      const totalBudget = members.reduce((sum, m) => sum + Math.max(0, m.monthly_budget ?? 0), 0);
-      if (totalBudget > 0) {
+      const totalShare = members.reduce((sum, m) => sum + Math.max(0, m.expense_share_percentage ?? 0), 0);
+      if (Math.abs(totalShare - 100) <= 0.01) {
         return {
           splitType,
           splits: calculatePercentageSplits(
             totalAmount,
             members.map((m) => ({
               member_id: m.id,
-              percentage: (Math.max(0, m.monthly_budget ?? 0) / totalBudget) * 100,
+              percentage: Math.max(0, m.expense_share_percentage ?? 0),
             }))
           ),
         };

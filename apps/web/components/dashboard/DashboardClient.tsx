@@ -1,9 +1,16 @@
 'use client';
 
 import { createClient } from '@/lib/supabase/client';
-import { useExpenses, useBills, useBalances, useWallet, useCategories, useMembers } from '@homebase/api';
+import { useExpenses, useBills, useBalances, useCategories, useMembers } from '@homebase/api';
 import { useUIStore, useAuthStore } from '@homebase/store';
-import { formatCurrency, getBudgetStatus, calculateSmartSettlements } from '@homebase/utils';
+import {
+  formatCurrency,
+  getBudgetCycleMonth,
+  getBudgetCycleRange,
+  getBudgetStatus,
+  isDateInBudgetCycle,
+  calculateSmartSettlements,
+} from '@homebase/utils';
 import type { Member, Household } from '@homebase/types';
 import { useEffect } from 'react';
 import Link from 'next/link';
@@ -15,7 +22,7 @@ interface Props {
 
 export function DashboardClient({ member, household }: Props) {
   const supabase = createClient();
-  const { selectedMonth } = useUIStore();
+  const { selectedMonth, setSelectedMonth } = useUIStore();
   const { setMember, setHousehold } = useAuthStore();
 
   useEffect(() => {
@@ -23,26 +30,37 @@ export function DashboardClient({ member, household }: Props) {
     setHousehold(household);
   }, [member, household]);
 
-  const { data: expenses = [] } = useExpenses(supabase, household.id, selectedMonth);
+  const cycleStartDay = household.budget_cycle_start_day ?? 1;
+  const { data: expenses = [] } = useExpenses(supabase, household.id, selectedMonth, cycleStartDay);
   const { data: bills = [] } = useBills(supabase, household.id);
   const { data: balances = [] } = useBalances(supabase, household.id, selectedMonth);
-  const { data: wallet } = useWallet(supabase, household.id);
   const { data: categories = [] } = useCategories(supabase, household.id);
   const { data: members = [] } = useMembers(supabase, household.id);
 
-  const billsForSelectedMonth = bills.filter((bill) => bill.due_date?.startsWith(selectedMonth));
-  const paidBillsForSelectedMonth = billsForSelectedMonth.filter((bill) => bill.status === 'paid');
+  // The shared store initially uses the calendar month. Correct it only when
+  // opening the current cycle before its configured start day.
+  useEffect(() => {
+    const currentCalendarMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const currentCycleMonth = getBudgetCycleMonth(new Date(), cycleStartDay);
+    if (selectedMonth === currentCalendarMonth && currentCycleMonth !== currentCalendarMonth) {
+      setSelectedMonth(currentCycleMonth);
+    }
+  }, [cycleStartDay, selectedMonth, setSelectedMonth]);
+
+  const billsForSelectedMonth = bills.filter((bill) =>
+    isDateInBudgetCycle(bill.due_date, selectedMonth, cycleStartDay)
+  );
   const pendingBills = billsForSelectedMonth.filter(
     (bill) => bill.status === 'pending' || bill.status === 'overdue'
   );
 
   const expenseSpent = expenses.reduce((sum, expense) => sum + expense.amount, 0);
   const totalSpent = expenseSpent;
-  const memberBudgetTotal = members.reduce((sum, m) => sum + (m.monthly_budget ?? 0), 0);
-  const monthlyIncome = household.monthly_income ?? memberBudgetTotal;
-  const remaining = monthlyIncome - totalSpent;
+  const baseCurrency = household.base_currency ?? 'USD';
+  const monthlyIncome = household.monthly_income ?? 0;
   const spentPct = monthlyIncome > 0 ? (totalSpent / monthlyIncome) * 100 : 0;
   const pendingTotal = pendingBills.reduce((sum, bill) => sum + bill.amount, 0);
+  const safeToSpend = monthlyIncome - totalSpent - pendingTotal;
   const groceryCat = categories.find(c => c.is_grocery);
   const grocerySpent = expenses
     .filter(e => e.category_id === groceryCat?.id)
@@ -163,18 +181,17 @@ export function DashboardClient({ member, household }: Props) {
         <div className="dash-topbar">
           <span className="dash-topbar-title">Dashboard</span>
           <div className="dash-topbar-right">
-            {wallet && <span className="wallet-pill">💰 {formatCurrency(wallet.balance)}</span>}
-            <MonthSelector />
+            <MonthSelector cycleStartDay={cycleStartDay} />
             <Link href="/expenses" className="topbar-btn">＋ Expense</Link>
           </div>
         </div>
 
         <div className="dash-content">
           <div className="summary-strip">
-            <SummaryCell label="Monthly Income" value={formatCurrency(monthlyIncome)} sub="Household total budget" accent="#C9A84C" />
-            <SummaryCell label="Total Spent" value={formatCurrency(totalSpent)} sub={`${Math.round(spentPct)}% of income`} accent="#E07B6A" progress={spentPct} progressColor="#E07B6A" />
-            <SummaryCell label="Remaining" value={formatCurrency(remaining)} sub={remaining < 0 ? 'Over budget' : 'Available'} accent={remaining < 0 ? '#E07B6A' : '#6BA583'} />
-            <SummaryCell label="Pending Bills" value={formatCurrency(pendingTotal)} sub={`${pendingBills.length} bill${pendingBills.length !== 1 ? 's' : ''} due`} accent="#7B9EC9" />
+            <SummaryCell label="Planned Income" value={formatCurrency(monthlyIncome, baseCurrency)} sub="This budget cycle" accent="#C9A84C" />
+            <SummaryCell label="Paid Spending" value={formatCurrency(totalSpent, baseCurrency)} sub={`${Math.round(spentPct)}% of income`} accent="#E07B6A" progress={spentPct} progressColor="#E07B6A" />
+            <SummaryCell label="Safe to Spend" value={formatCurrency(safeToSpend, baseCurrency)} sub={safeToSpend < 0 ? 'Over plan after due bills' : 'After paid spending + due bills'} accent={safeToSpend < 0 ? '#E07B6A' : '#6BA583'} />
+            <SummaryCell label="Due Bills" value={formatCurrency(pendingTotal, baseCurrency)} sub={`${pendingBills.length} bill${pendingBills.length !== 1 ? 's' : ''} due`} accent="#7B9EC9" />
           </div>
 
           <div className="dash-grid">
@@ -199,8 +216,8 @@ export function DashboardClient({ member, household }: Props) {
                             {cat.icon} {cat.name}
                           </span>
                           <span className="cat-amounts">
-                            <strong>{formatCurrency(spent)}</strong>
-                            {limit > 0 && ` / ${formatCurrency(limit)}`}
+                            <strong>{formatCurrency(spent, baseCurrency)}</strong>
+                            {limit > 0 && ` / ${formatCurrency(limit, baseCurrency)}`}
                           </span>
                         </div>
                         {limit > 0 && (
@@ -232,7 +249,7 @@ export function DashboardClient({ member, household }: Props) {
                         <div className="exp-name">{exp.name}</div>
                         <div className="exp-meta">{exp.date} · {payer?.name}</div>
                       </div>
-                      <span className="exp-amount">{formatCurrency(exp.amount)}</span>
+                      <span className="exp-amount">{formatCurrency(exp.amount, baseCurrency)}</span>
                     </div>
                   );
                 })}
@@ -254,10 +271,9 @@ export function DashboardClient({ member, household }: Props) {
                       <MemberAvatar member={fromM} size={28} />
                       <div className="bal-info">
                         <div className="bal-name">{fromM?.name} → {toM?.name}</div>
-                        <div className="bal-sub">Unsettled</div>
+                        <div className="bal-sub">All-time unsettled</div>
                       </div>
-                      <span className="bal-amount">{formatCurrency(bal.amount)}</span>
-                      <button className="bal-settle">Settle</button>
+                      <span className="bal-amount">{formatCurrency(bal.amount, baseCurrency)}</span>
                     </div>
                   );
                 })}
@@ -272,7 +288,7 @@ export function DashboardClient({ member, household }: Props) {
                         <div key={i} className="settlement-item">
                           <MemberAvatar member={fromM} size={20} />
                           <span className="settlement-names">{fromM?.name} pays {toM?.name}</span>
-                          <span className="settlement-amt">{formatCurrency(s.amount)}</span>
+                           <span className="settlement-amt">{formatCurrency(s.amount, baseCurrency)}</span>
                         </div>
                       );
                     })}
@@ -292,7 +308,7 @@ export function DashboardClient({ member, household }: Props) {
                       <div className="bill-name">{bill.name}</div>
                       <div className="bill-due">Due {bill.due_date}</div>
                     </div>
-                    <span className="bill-amount">{formatCurrency(bill.amount)}</span>
+                    <span className="bill-amount">{formatCurrency(bill.amount, baseCurrency)}</span>
                     <span className="bill-badge bill-pending">{bill.status === 'overdue' ? 'Overdue' : 'Due'}</span>
                   </div>
                 ))}
@@ -306,8 +322,8 @@ export function DashboardClient({ member, household }: Props) {
                 </div>
                 <div className="grocery-widget">
                   <div className="grocery-header">
-                    <span className="grocery-spent-label">{formatCurrency(grocerySpent)}</span>
-                    <span className="grocery-budget-label">of {formatCurrency(groceryCat?.budget_limit ?? 0)}</span>
+                      <span className="grocery-spent-label">{formatCurrency(grocerySpent, baseCurrency)}</span>
+                      <span className="grocery-budget-label">of {formatCurrency(groceryCat?.budget_limit ?? 0, baseCurrency)}</span>
                   </div>
                   <div className="grocery-track-outer">
                     <div className="grocery-track-fill" style={{
@@ -317,7 +333,7 @@ export function DashboardClient({ member, household }: Props) {
                   </div>
                   <div className="grocery-remaining-box">
                     <span className="grocery-rem-label">Remaining</span>
-                    <span className="grocery-rem-value">{formatCurrency(Math.max(0, (groceryCat?.budget_limit ?? 0) - grocerySpent))}</span>
+                    <span className="grocery-rem-value">{formatCurrency(Math.max(0, (groceryCat?.budget_limit ?? 0) - grocerySpent), baseCurrency)}</span>
                   </div>
                 </div>
               </div>
@@ -348,13 +364,23 @@ function SummaryCell({ label, value, sub, accent, progress, progressColor }: {
   );
 }
 
-function MonthSelector() {
+function MonthSelector({ cycleStartDay }: { cycleStartDay: number }) {
   const { selectedMonth, setSelectedMonth } = useUIStore();
-  const monthOptions = [
-    { value: '2026-03', label: 'March 2026' },
-    { value: '2026-02', label: 'February 2026' },
-    { value: '2026-01', label: 'January 2026' },
-  ];
+  const monthOptions = Array.from({ length: 36 }, (_, index) => {
+    const date = new Date();
+    date.setMonth(date.getMonth() - index);
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const range = getBudgetCycleRange(value, cycleStartDay);
+    const start = new Date(`${range.startDate}T12:00:00`);
+    const end = new Date(`${range.endDate}T12:00:00`);
+    const label = cycleStartDay === 1
+      ? start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      : `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    return { value, label };
+  });
+  if (!monthOptions.some((option) => option.value === selectedMonth)) {
+    monthOptions.unshift({ value: selectedMonth, label: selectedMonth });
+  }
 
   return (
     <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="month-select">

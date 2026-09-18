@@ -10,6 +10,7 @@ export default function BalancesScreen() {
   const { household } = useAuthStore();
   const { selectedMonth } = useUIStore();
   const householdId = household?.id ?? '';
+  const baseCurrency = household?.base_currency ?? 'USD';
 
   const { data: balances = [] } = useBalances(supabase, householdId, selectedMonth);
   const { data: members = [] } = useMembers(supabase, householdId);
@@ -22,7 +23,7 @@ export default function BalancesScreen() {
     const toM = members.find(m => m.id === toId);
     Alert.alert(
       'Confirm Settlement',
-      `Mark ${fromM?.name} → ${toM?.name} (${formatCurrency(amount)}) as settled?`,
+      `Record ${fromM?.name} → ${toM?.name} (${formatCurrency(amount, baseCurrency)}) as a reimbursement payment?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -66,7 +67,7 @@ export default function BalancesScreen() {
                       <Text style={styles.rowTitle}>{fromM?.name} pays {toM?.name}</Text>
                     </View>
                     <Text style={[styles.rowAmount, { color: '#2D5F3F' }]}>
-                      {formatCurrency(s.amount)}
+                      {formatCurrency(s.amount, baseCurrency)}
                     </Text>
                     <TouchableOpacity
                       style={styles.settleBtn}
@@ -103,7 +104,7 @@ export default function BalancesScreen() {
                     <Text style={styles.rowSub}>From shared expenses</Text>
                   </View>
                   <Text style={[styles.rowAmount, { color: '#C84B31' }]}>
-                    {formatCurrency(bal.amount)}
+                    {formatCurrency(bal.amount, baseCurrency)}
                   </Text>
                 </View>
               );

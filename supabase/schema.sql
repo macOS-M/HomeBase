@@ -11,8 +11,11 @@ create table households (
   name            text not null,
   created_by      uuid references auth.users(id) on delete set null,
   monthly_income  numeric(10,2),
+  base_currency   text not null default 'USD' check (base_currency ~ '^[A-Z]{3}$'),
+  timezone        text not null default 'UTC',
   default_split_type text not null default 'equal' check (default_split_type in ('equal','percentage')),
   budget_period   text not null default 'monthly' check (budget_period in ('monthly','biweekly','custom')),
+  budget_cycle_start_day integer not null default 1 check (budget_cycle_start_day between 1 and 28),
   invite_code     text not null unique default upper(substring(md5(random()::text) from 1 for 6)),
   created_at      timestamptz not null default now()
 );
@@ -35,6 +38,8 @@ create table members (
   name          text not null,
   email         text not null,
   avatar_url    text,
+  income_contribution numeric(10,2) not null default 0 check (income_contribution >= 0),
+  expense_share_percentage numeric(5,2) check (expense_share_percentage between 0 and 100),
   monthly_budget numeric(10,2) not null default 0 check (monthly_budget >= 0),
   role          text not null default 'member' check (role in ('admin','member')),
   joined_at     timestamptz not null default now(),
@@ -319,7 +324,7 @@ create table expenses (
   currency_code text not null default 'USD',
   fx_rate       numeric(14,8) not null default 1,
   source_type   text not null default 'manual' check (source_type in ('manual','bill')),
-  source_bill_id uuid references bills(id) on delete set null,
+  source_bill_id uuid,
   category_id   uuid references categories(id) on delete set null,
   paid_by       uuid not null references members(id) on delete restrict,
   split_type    text not null default 'equal' check (split_type in ('equal','percentage','assigned')),
@@ -333,7 +338,6 @@ create table expenses (
 alter table expenses add column if not exists source_type text not null default 'manual';
 alter table expenses drop constraint if exists expenses_source_type_check;
 alter table expenses add constraint expenses_source_type_check check (source_type in ('manual','bill'));
-alter table expenses add column if not exists source_bill_id uuid references bills(id) on delete set null;
 alter table expenses add column if not exists original_amount numeric(10,2);
 alter table expenses add column if not exists currency_code text not null default 'USD';
 alter table expenses add column if not exists fx_rate numeric(14,8) not null default 1;
@@ -356,7 +360,7 @@ create table expense_splits (
   id          uuid primary key default uuid_generate_v4(),
   expense_id  uuid not null references expenses(id) on delete cascade,
   member_id   uuid not null references members(id) on delete cascade,
-  amount      numeric(10,2) not null,
+  amount      numeric(10,2) not null check (amount >= 0),
   percentage  numeric(5,2),
   is_settled  boolean not null default false
 );
@@ -382,6 +386,9 @@ create table bills (
   original_amount numeric(10,2),
   currency_code text not null default 'USD',
   fx_rate       numeric(14,8) not null default 1,
+  category_id   uuid references categories(id) on delete set null,
+  paid_by       uuid references members(id) on delete restrict,
+  series_id     uuid not null default uuid_generate_v4(),
   due_date      date not null,
   status        text not null default 'pending' check (status in ('paid','pending','overdue')),
   recurring     text not null default 'monthly' check (recurring in ('monthly','weekly','yearly','once')),
@@ -392,10 +399,18 @@ create table bills (
 alter table bills add column if not exists original_amount numeric(10,2);
 alter table bills add column if not exists currency_code text not null default 'USD';
 alter table bills add column if not exists fx_rate numeric(14,8) not null default 1;
+alter table bills add column if not exists category_id uuid references categories(id) on delete set null;
+alter table bills add column if not exists paid_by uuid references members(id) on delete restrict;
+alter table bills add column if not exists series_id uuid not null default uuid_generate_v4();
 update bills set original_amount = amount where original_amount is null;
 alter table bills alter column original_amount set not null;
 alter table bills drop constraint if exists bills_currency_code_check;
 alter table bills add constraint bills_currency_code_check check (currency_code ~ '^[A-Z]{3}$');
+
+alter table expenses add column if not exists source_bill_id uuid;
+alter table expenses drop constraint if exists expenses_source_bill_id_fkey;
+alter table expenses add constraint expenses_source_bill_id_fkey
+  foreign key (source_bill_id) references bills(id) on delete set null;
 
 alter table bills enable row level security;
 
@@ -413,6 +428,7 @@ create table settlements (
   to_member_id    uuid not null references members(id),
   amount          numeric(10,2) not null,
   note            text,
+  method          text not null default 'legacy' check (method in ('legacy','net_settlement')),
   settled_at      timestamptz not null default now()
 );
 

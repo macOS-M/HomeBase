@@ -23,7 +23,11 @@ export default async function SettingsPage() {
   return (
     <AppShell>
       <AuthHydrator member={member} household={household} />
-      <SettingsPageClient household={household} members={(members ?? []) as HouseholdMember[]} />
+      <SettingsPageClient
+        household={household}
+        member={member}
+        members={(members ?? []) as HouseholdMember[]}
+      />
     </AppShell>
   );
 }

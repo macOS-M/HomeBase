@@ -9,8 +9,6 @@ import { COMMON_CURRENCIES, formatCurrency, calculateEqualSplits, calculatePerce
 import type { SplitType } from '@homebase/types';
 import { supabase } from '@/lib/supabase';
 
-const BASE_CURRENCY = 'USD';
-
 function getLocalDateISO() {
   const now = new Date();
   const offsetMs = now.getTimezoneOffset() * 60 * 1000;
@@ -21,8 +19,10 @@ export default function ExpensesScreen() {
   const { household } = useAuthStore();
   const { selectedMonth } = useUIStore();
   const householdId = household?.id ?? '';
+  const baseCurrency = household?.base_currency ?? 'USD';
+  const cycleStartDay = household?.budget_cycle_start_day ?? 1;
 
-  const { data: expenses = [], isLoading } = useExpenses(supabase, householdId, selectedMonth);
+  const { data: expenses = [], isLoading } = useExpenses(supabase, householdId, selectedMonth, cycleStartDay);
   const { data: categories = [] } = useCategories(supabase, householdId);
   const { data: members = [] } = useMembers(supabase, householdId);
   const createExpense = useCreateExpense(supabase, householdId);
@@ -30,7 +30,7 @@ export default function ExpensesScreen() {
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
-  const [currencyCode, setCurrencyCode] = useState(BASE_CURRENCY);
+  const [currencyCode, setCurrencyCode] = useState(baseCurrency);
   const [selectedCat, setSelectedCat] = useState('');
   const [paidBy, setPaidBy] = useState('');
   const [splitType, setSplitType] = useState<SplitType>(
@@ -40,15 +40,15 @@ export default function ExpensesScreen() {
   function resetForm() {
     setName('');
     setAmount('');
-    setCurrencyCode(BASE_CURRENCY);
+    setCurrencyCode(baseCurrency);
     setSelectedCat('');
     setPaidBy('');
     setSplitType(household?.default_split_type === 'percentage' ? 'percentage' : 'equal');
   }
 
   function buildPercentageSplits(totalAmount: number) {
-    const totalBudget = members.reduce((sum, m) => sum + Math.max(0, m.monthly_budget ?? 0), 0);
-    if (totalBudget <= 0) {
+    const totalShare = members.reduce((sum, m) => sum + Math.max(0, m.expense_share_percentage ?? 0), 0);
+    if (Math.abs(totalShare - 100) > 0.01) {
       return calculateEqualSplits(totalAmount, members.map(m => m.id));
     }
 
@@ -56,7 +56,7 @@ export default function ExpensesScreen() {
       totalAmount,
       members.map((m) => ({
         member_id: m.id,
-        percentage: (Math.max(0, m.monthly_budget ?? 0) / totalBudget) * 100,
+          percentage: Math.max(0, m.expense_share_percentage ?? 0),
       }))
     );
   }
@@ -67,6 +67,10 @@ export default function ExpensesScreen() {
       return;
     }
     const amt = parseFloat(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      Alert.alert('Invalid amount', 'Enter an amount greater than zero.');
+      return;
+    }
     const splits =
       splitType === 'percentage'
         ? buildPercentageSplits(amt)
@@ -113,9 +117,9 @@ export default function ExpensesScreen() {
                   <Text style={styles.rowSub}>{exp.date} · {cat?.name} · {payer?.name}</Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.rowAmount}>{formatCurrency(exp.original_amount ?? exp.amount, exp.currency_code ?? BASE_CURRENCY)}</Text>
-                  {(exp.currency_code ?? BASE_CURRENCY) !== BASE_CURRENCY && (
-                    <Text style={styles.rowSub}>≈ {formatCurrency(exp.amount, BASE_CURRENCY)}</Text>
+                  <Text style={styles.rowAmount}>{formatCurrency(exp.original_amount ?? exp.amount, exp.currency_code ?? baseCurrency)}</Text>
+                  {(exp.currency_code ?? baseCurrency) !== baseCurrency && (
+                    <Text style={styles.rowSub}>≈ {formatCurrency(exp.amount, baseCurrency)}</Text>
                   )}
                 </View>
               </View>
@@ -203,7 +207,7 @@ export default function ExpensesScreen() {
               ))}
             </View>
             {splitType === 'percentage' && (
-              <Text style={styles.helperText}>Uses each member monthly budget as their share (for example 60/40).</Text>
+              <Text style={styles.helperText}>Uses the household’s saved expense shares (for example 60/40).</Text>
             )}
 
             <TouchableOpacity

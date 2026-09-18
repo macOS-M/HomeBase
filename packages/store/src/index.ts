@@ -4,7 +4,7 @@ import type { Member, Household } from '@homebase/types';
 // ─── Auth Store ───────────────────────────────────────────────────────────────
 
 interface AuthState {
-  user: { id: string; email: string } | null;
+  user: { id: string; email?: string } | null;
   member: Member | null;
   household: Household | null;
   isLoading: boolean;

@@ -3,15 +3,11 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '@homebase/store';
-import { useWallet } from '@homebase/api';
-import { formatCurrency } from '@homebase/utils';
 import { supabase } from '@/lib/supabase';
 
 export default function MoreScreen() {
   const router = useRouter();
   const { household, member } = useAuthStore();
-  const householdId = household?.id ?? '';
-  const { data: wallet } = useWallet(supabase, householdId);
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -33,17 +29,6 @@ export default function MoreScreen() {
             <Text style={styles.profileName}>{member?.name}</Text>
             <Text style={styles.profileRole}>{member?.role} · {household?.name}</Text>
           </View>
-        </View>
-
-        {/* Wallet balance */}
-        <View style={styles.walletCard}>
-          <View>
-            <Text style={styles.walletLabel}>HOUSEHOLD WALLET</Text>
-            <Text style={styles.walletAmount}>{formatCurrency(wallet?.balance ?? 0)}</Text>
-          </View>
-          <TouchableOpacity style={styles.walletBtn}>
-            <Text style={styles.walletBtnText}>＋ Add Funds</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Quick links */}
@@ -111,17 +96,6 @@ const styles = StyleSheet.create({
   avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   profileName: { fontSize: 16, fontWeight: '600', color: '#1A1714' },
   profileRole: { fontSize: 12, color: '#9B9590', marginTop: 2, textTransform: 'capitalize' },
-  walletCard: {
-    backgroundColor: '#1A1714', borderRadius: 16, padding: 18,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20,
-  },
-  walletLabel: { fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: 0.8, marginBottom: 4 },
-  walletAmount: { fontSize: 26, fontWeight: '700', color: '#fff' },
-  walletBtn: {
-    backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 10,
-    paddingHorizontal: 14, paddingVertical: 9,
-  },
-  walletBtnText: { color: '#fff', fontSize: 13, fontWeight: '500' },
   sectionLabel: {
     fontSize: 11, fontWeight: '600', color: '#9B9590',
     letterSpacing: 0.8, marginBottom: 8,

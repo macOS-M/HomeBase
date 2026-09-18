@@ -2,12 +2,10 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { useExpensesAll, useCreateExpense, useDeleteExpense, useCategories, useMembers } from '@homebase/api';
+import { useExpenses, useCreateExpense, useDeleteExpense, useCategories, useMembers } from '@homebase/api';
 import { useUIStore } from '@homebase/store';
 import { COMMON_CURRENCIES, calculateEqualSplits, calculatePercentageSplits, formatCurrency, formatRelativeDate, getCurrencyLabel } from '@homebase/utils';
 import type { ExpenseReceiptItem, Household, Member, SplitType } from '@homebase/types';
-
-const BASE_CURRENCY = 'USD';
 
 function getLocalDateInputValue() {
   const now = new Date();
@@ -212,12 +210,13 @@ const STYLES = `
 export function ExpensesPageClient({ household, member }: { household: Household; member: Member }) {
   const supabase = createClient();
   const { selectedMonth, setSelectedMonth } = useUIStore();
+  const baseCurrency = household.base_currency ?? 'USD';
 
   const {
-    data: allExpenses = [],
+    data: expenses = [],
     error: expensesError,
     isLoading: expensesLoading,
-  } = useExpensesAll(supabase, household.id);
+  } = useExpenses(supabase, household.id, selectedMonth, household.budget_cycle_start_day ?? 1);
   const { data: categories = [], error: categoriesError } = useCategories(supabase, household.id);
   const { data: members = [], error: membersError } = useMembers(supabase, household.id);
   const createExpense = useCreateExpense(supabase, household.id);
@@ -226,7 +225,7 @@ export function ExpensesPageClient({ household, member }: { household: Household
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
-  const [currencyCode, setCurrencyCode] = useState(BASE_CURRENCY);
+  const [currencyCode, setCurrencyCode] = useState(baseCurrency);
   const [categoryId, setCategoryId] = useState('');
   const [paidBy, setPaidBy] = useState(member.id);
   const [date, setDate] = useState(getLocalDateInputValue());
@@ -260,11 +259,6 @@ export function ExpensesPageClient({ household, member }: { household: Household
 
   const monthOptions = useMemo(() => buildMonthOptions(selectedMonth), [selectedMonth]);
   const queryError = expensesError || categoriesError || membersError;
-  const expenses = useMemo(
-    () => allExpenses.filter((expense) => expense.date?.startsWith(selectedMonth)),
-    [allExpenses, selectedMonth]
-  );
-
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(''), 2800); }
 
   async function processReceiptFile(file: File) {
@@ -450,14 +444,14 @@ export function ExpensesPageClient({ household, member }: { household: Household
   }, [expenses, categories]);
 
   function buildPercentageSplits(totalAmount: number) {
-    const totalBudget = members.reduce((sum, m) => sum + Math.max(0, m.monthly_budget ?? 0), 0);
-    if (totalBudget <= 0) {
+    const totalShare = members.reduce((sum, m) => sum + Math.max(0, m.expense_share_percentage ?? 0), 0);
+    if (Math.abs(totalShare - 100) > 0.01) {
       return calculateEqualSplits(totalAmount, members.map((m) => m.id));
     }
 
     const percentages = members.map((m) => ({
       member_id: m.id,
-      percentage: ((Math.max(0, m.monthly_budget ?? 0) / totalBudget) * 100),
+      percentage: Math.max(0, m.expense_share_percentage ?? 0),
     }));
 
     return calculatePercentageSplits(totalAmount, percentages);
@@ -480,7 +474,7 @@ export function ExpensesPageClient({ household, member }: { household: Household
         split_type: splitType, splits, date,
         receipt_items: receiptItems.length > 0 ? receiptItems : undefined,
       });
-      setName(''); setAmount(''); setCurrencyCode(BASE_CURRENCY); setCategoryId(''); setPaidBy(member.id);
+      setName(''); setAmount(''); setCurrencyCode(baseCurrency); setCategoryId(''); setPaidBy(member.id);
       setReceiptItems([]); setScanError(''); setManualItemName(''); setManualItemCost('');
       setDate(getLocalDateInputValue());
       setSplitType(household.default_split_type === 'percentage' ? 'percentage' : 'equal');
@@ -492,9 +486,9 @@ export function ExpensesPageClient({ household, member }: { household: Household
   }
 
   async function handleDelete(id: string, expName: string) {
-    if (!confirm(`Delete "${expName}"?`)) return;
+    if (!confirm(`Void "${expName}"? This keeps an audit trail but removes it from totals.`)) return;
     await deleteExpense.mutateAsync(id);
-    showToast('🗑️ Expense deleted');
+    showToast('↩︎ Expense voided');
   }
 
   useEffect(() => {
@@ -557,13 +551,13 @@ export function ExpensesPageClient({ household, member }: { household: Household
           <div className="ep-summary">
             <div className="ep-sc">
               <div className="ep-sc-label">Total Spent</div>
-              <div className="ep-sc-val">{formatCurrency(totalSpent)}</div>
+              <div className="ep-sc-val">{formatCurrency(totalSpent, baseCurrency)}</div>
               <div className="ep-sc-sub">{expenseCount} expense{expenseCount !== 1 ? 's' : ''}</div>
               <div className="ep-sc-bar" style={{background:'#E07B6A'}} />
             </div>
             <div className="ep-sc">
               <div className="ep-sc-label">Avg per Expense</div>
-              <div className="ep-sc-val">{formatCurrency(avgExpense)}</div>
+              <div className="ep-sc-val">{formatCurrency(avgExpense, baseCurrency)}</div>
               <div className="ep-sc-sub">this month</div>
               <div className="ep-sc-bar" style={{background:'#C9A84C'}} />
             </div>
@@ -631,7 +625,7 @@ export function ExpensesPageClient({ household, member }: { household: Household
                       </div>
                     </div>
                     {splitType === 'percentage' && (
-                      <div className="panel-sub">Uses each member monthly budget as their share of each expense.</div>
+                      <div className="panel-sub">Uses the household’s saved expense-share percentages.</div>
                     )}
                     <div className="scan-row">
                       <label className="fld-label">Receipt Image Scanner</label>
@@ -749,7 +743,7 @@ export function ExpensesPageClient({ household, member }: { household: Household
                   filtered.map(exp => {
                     const cat = categories.find(c => c.id === exp.category_id);
                     const payer = members.find(m => m.id === exp.paid_by);
-                    const sourceCurrency = exp.currency_code ?? BASE_CURRENCY;
+                    const sourceCurrency = exp.currency_code ?? baseCurrency;
                     const sourceAmount = exp.original_amount ?? exp.amount;
                     const storedReceiptItems = (Array.isArray(exp.receipt_items) ? exp.receipt_items : []) as {
                       name?: string;
@@ -796,9 +790,9 @@ export function ExpensesPageClient({ household, member }: { household: Household
                         </div>
                         <div className="exp-amount-wrap">
                           <span className="exp-amount">{formatCurrency(sourceAmount, sourceCurrency)}</span>
-                          {sourceCurrency !== BASE_CURRENCY && <span className="exp-amount-sub">≈ {formatCurrency(exp.amount, BASE_CURRENCY)}</span>}
+                          {sourceCurrency !== baseCurrency && <span className="exp-amount-sub">≈ {formatCurrency(exp.amount, baseCurrency)}</span>}
                         </div>
-                        <button className="exp-del" onClick={() => handleDelete(exp.id, exp.name)}>✕</button>
+                        {exp.source_type !== 'bill' && <button className="exp-del" onClick={() => handleDelete(exp.id, exp.name)} title="Void expense">✕</button>}
                       </div>
                     );
                   })
@@ -817,7 +811,7 @@ export function ExpensesPageClient({ household, member }: { household: Household
                       <span className="breakdown-name">{b.icon} {b.name}</span>
                     </div>
                     <div className="breakdown-right">
-                      <span className="breakdown-amt">{formatCurrency(b.total)}</span>
+                      <span className="breakdown-amt">{formatCurrency(b.total, baseCurrency)}</span>
                       <span className="breakdown-pct">{totalSpent > 0 ? Math.round((b.total/totalSpent)*100) : 0}%</span>
                     </div>
                   </div>
@@ -839,7 +833,7 @@ export function ExpensesPageClient({ household, member }: { household: Household
                         <span className="breakdown-name">{m.name}</span>
                       </div>
                       <div className="breakdown-right">
-                        <span className="breakdown-amt">{formatCurrency(paid)}</span>
+                        <span className="breakdown-amt">{formatCurrency(paid, baseCurrency)}</span>
                         <span className="breakdown-pct">{Math.round(pct)}%</span>
                       </div>
                     </div>

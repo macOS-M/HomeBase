@@ -14,7 +14,7 @@ export default async function BillsPage() {
   return (
     <AppShell>
       <AuthHydrator member={member} household={household} />
-      <BillsPageClient household={household} />
+      <BillsPageClient household={household} member={member} />
     </AppShell>
   );
 }

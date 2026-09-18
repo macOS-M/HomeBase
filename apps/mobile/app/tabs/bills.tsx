@@ -6,11 +6,10 @@ import { useBills, useToggleBillStatus } from '@homebase/api';
 import { formatCurrency, getDaysUntilDue } from '@homebase/utils';
 import { supabase } from '@/lib/supabase';
 
-const BASE_CURRENCY = 'USD';
-
 export default function BillsScreen() {
   const { household } = useAuthStore();
   const householdId = household?.id ?? '';
+  const baseCurrency = household?.base_currency ?? 'USD';
 
   const { data: bills = [] } = useBills(supabase, householdId);
   const toggleStatus = useToggleBillStatus(supabase, householdId);
@@ -19,9 +18,10 @@ export default function BillsScreen() {
   const paid = bills.filter(b => b.status === 'paid');
 
   function handleToggle(billId: string, current: string) {
+    if (current === 'paid') return;
     toggleStatus.mutate({
       billId,
-      status: current === 'paid' ? 'pending' : 'paid',
+      status: 'paid',
     });
   }
 
@@ -52,9 +52,9 @@ export default function BillsScreen() {
                       </Text>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.rowAmount}>{formatCurrency(bill.original_amount ?? bill.amount, bill.currency_code ?? BASE_CURRENCY)}</Text>
-                      {(bill.currency_code ?? BASE_CURRENCY) !== BASE_CURRENCY && (
-                        <Text style={styles.rowSub}>≈ {formatCurrency(bill.amount, BASE_CURRENCY)}</Text>
+                      <Text style={styles.rowAmount}>{formatCurrency(bill.original_amount ?? bill.amount, bill.currency_code ?? baseCurrency)}</Text>
+                      {(bill.currency_code ?? baseCurrency) !== baseCurrency && (
+                        <Text style={styles.rowSub}>≈ {formatCurrency(bill.amount, baseCurrency)}</Text>
                       )}
                     </View>
                     <TouchableOpacity
@@ -84,17 +84,14 @@ export default function BillsScreen() {
                       <Text style={styles.rowSub}>Paid ✓</Text>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={[styles.rowAmount, styles.paidText]}>{formatCurrency(bill.original_amount ?? bill.amount, bill.currency_code ?? BASE_CURRENCY)}</Text>
-                      {(bill.currency_code ?? BASE_CURRENCY) !== BASE_CURRENCY && (
-                        <Text style={styles.rowSub}>≈ {formatCurrency(bill.amount, BASE_CURRENCY)}</Text>
+                      <Text style={[styles.rowAmount, styles.paidText]}>{formatCurrency(bill.original_amount ?? bill.amount, bill.currency_code ?? baseCurrency)}</Text>
+                      {(bill.currency_code ?? baseCurrency) !== baseCurrency && (
+                        <Text style={styles.rowSub}>≈ {formatCurrency(bill.amount, baseCurrency)}</Text>
                       )}
                     </View>
-                    <TouchableOpacity
-                      style={[styles.toggle, styles.togglePaid]}
-                      onPress={() => handleToggle(bill.id, bill.status)}
-                    >
+                    <View style={[styles.toggle, styles.togglePaid]}>
                       <Text style={{ color: '#fff', fontSize: 12 }}>✓</Text>
-                    </TouchableOpacity>
+                    </View>
                   </View>
                 );
               })}

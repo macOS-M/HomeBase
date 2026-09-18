@@ -6,6 +6,48 @@ import type {
   Member,
 } from '@homebase/types';
 
+// ─── Budget-cycle dates ─────────────────────────────────────────────────────
+// A selected cycle is identified by the month in which it begins. For example,
+// `2026-09` with a start day of 15 covers 15 Sep through 14 Oct.
+
+function localDateKey(year: number, monthIndex: number, day: number): string {
+  return `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function parseMonthKey(month: string): { year: number; monthIndex: number } {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) throw new Error('Budget cycle must be a YYYY-MM value.');
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (monthIndex < 0 || monthIndex > 11) throw new Error('Budget cycle month is invalid.');
+  return { year, monthIndex };
+}
+
+export function getBudgetCycleRange(month: string, cycleStartDay = 1) {
+  const { year, monthIndex } = parseMonthKey(month);
+  const startDay = Math.max(1, Math.min(28, Math.trunc(cycleStartDay)));
+  const startDate = localDateKey(year, monthIndex, startDay);
+  const nextStart = new Date(year, monthIndex + 1, startDay);
+  const endExclusive = localDateKey(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate());
+  const endInclusiveDate = new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate() - 1);
+  const endDate = localDateKey(endInclusiveDate.getFullYear(), endInclusiveDate.getMonth(), endInclusiveDate.getDate());
+
+  return { startDate, endDate, endExclusive };
+}
+
+export function getBudgetCycleMonth(date: Date = new Date(), cycleStartDay = 1): string {
+  const startDay = Math.max(1, Math.min(28, Math.trunc(cycleStartDay)));
+  const cycleDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (cycleDate.getDate() < startDay) cycleDate.setMonth(cycleDate.getMonth() - 1);
+  return `${cycleDate.getFullYear()}-${String(cycleDate.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function isDateInBudgetCycle(date: string | null | undefined, month: string, cycleStartDay = 1): boolean {
+  if (!date) return false;
+  const { startDate, endExclusive } = getBudgetCycleRange(month, cycleStartDay);
+  return date >= startDate && date < endExclusive;
+}
+
 // ─── Settlement Calculator ────────────────────────────────────────────────────
 // Minimises the number of transactions needed to settle all balances.
 // Uses a greedy creditor/debtor matching algorithm.
@@ -63,13 +105,21 @@ export function calculateEqualSplits(
   memberIds: string[]
 ): Omit<ExpenseSplit, 'is_settled'>[] {
   const count = memberIds.length;
+  if (count === 0) {
+    throw new Error('At least one member is required to split an expense.');
+  }
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    throw new Error('Expense total must be greater than zero.');
+  }
   const base = Math.floor((totalAmount / count) * 100) / 100;
   const remainder = Math.round((totalAmount - base * count) * 100) / 100;
 
   return memberIds.map((member_id, i) => ({
     member_id,
     amount: i === 0 ? base + remainder : base, // first member absorbs rounding
-    percentage: Math.round(100 / count),
+    // Keep the stored display percentages internally consistent with the cents
+    // that are actually owed. This also makes three-way equal splits total 100.
+    percentage: Math.round(((i === 0 ? base + remainder : base) / totalAmount) * 10000) / 100,
   }));
 }
 
@@ -77,47 +127,69 @@ export function calculatePercentageSplits(
   totalAmount: number,
   splits: { member_id: string; percentage: number }[]
 ): Omit<ExpenseSplit, 'is_settled'>[] {
-  return splits.map(({ member_id, percentage }) => ({
+  if (splits.length === 0) {
+    throw new Error('At least one member is required to split an expense.');
+  }
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    throw new Error('Expense total must be greater than zero.');
+  }
+
+  const percentageTotal = splits.reduce((sum, split) => sum + split.percentage, 0);
+  if (!Number.isFinite(percentageTotal) || Math.abs(percentageTotal - 100) > 0.01) {
+    throw new Error('Expense shares must add up to 100%.');
+  }
+
+  const calculated = splits.map(({ member_id, percentage }) => ({
     member_id,
     amount: Math.round((totalAmount * percentage) / 100 * 100) / 100,
     percentage,
   }));
+
+  // Do not lose (or invent) a cent due to independent rounding.
+  const total = calculated.reduce((sum, split) => sum + split.amount, 0);
+  const delta = Math.round((totalAmount - total) * 100) / 100;
+  calculated[0].amount = Math.round((calculated[0].amount + delta) * 100) / 100;
+  return calculated;
 }
 
 // ─── Balance Aggregator ───────────────────────────────────────────────────────
 // Takes all unsettled expenses and returns net balances between members.
 
-export function aggregateBalances(expenses: Expense[]): Balance[] {
-  const net: Record<string, Record<string, number>> = {};
+export function aggregateBalances(
+  expenses: Expense[],
+  settlements: { from_member_id: string; to_member_id: string; amount: number; method?: string }[] = []
+): Balance[] {
+  // Work from member net positions rather than pairs of source expenses. This
+  // permits a valid net settlement (A pays C to settle A→B and B→C) while
+  // retaining every expense as an immutable source record.
+  const net: Record<string, number> = {};
 
   for (const expense of expenses) {
+    if (expense.voided_at) continue;
     for (const split of expense.splits) {
       if (split.is_settled) continue;
       if (split.member_id === expense.paid_by) continue;
 
-      const from = split.member_id;
-      const to = expense.paid_by;
-
-      if (!net[from]) net[from] = {};
-      net[from][to] = (net[from][to] ?? 0) + split.amount;
+      net[split.member_id] = (net[split.member_id] ?? 0) - split.amount;
+      net[expense.paid_by] = (net[expense.paid_by] ?? 0) + split.amount;
     }
   }
 
-  const balances: Balance[] = [];
-
-  for (const [from, tos] of Object.entries(net)) {
-    for (const [to, amount] of Object.entries(tos)) {
-      if (amount > 0.01) {
-        balances.push({
-          from_member_id: from,
-          to_member_id: to,
-          amount: Math.round(amount * 100) / 100,
-        });
-      }
-    }
+  for (const settlement of settlements) {
+    if (settlement.method !== 'net_settlement') continue;
+    net[settlement.from_member_id] = (net[settlement.from_member_id] ?? 0) + settlement.amount;
+    net[settlement.to_member_id] = (net[settlement.to_member_id] ?? 0) - settlement.amount;
   }
 
-  return balances;
+  return calculateSmartSettlements(
+    Object.entries(net)
+      .filter(([, amount]) => Math.abs(amount) >= 0.01)
+      .flatMap(([memberId, amount]) =>
+        amount < 0
+          ? [{ from_member_id: memberId, to_member_id: '__net__', amount: -amount }]
+          : [{ from_member_id: '__net__', to_member_id: memberId, amount }]
+      )
+  );
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -150,6 +222,7 @@ export const COMMON_CURRENCIES = [
   { code: 'CNY', symbol: '¥', name: 'Chinese Yuan' },
   { code: 'INR', symbol: '₹', name: 'Indian Rupee' },
   { code: 'MXN', symbol: 'MX$', name: 'Mexican Peso' },
+  { code: 'GTQ', symbol: 'Q', name: 'Guatemalan Quetzal' },
   { code: 'BRL', symbol: 'R$', name: 'Brazilian Real' },
   { code: 'CRC', symbol: '₡', name: 'Costa Rican Colón' },
   { code: 'CHF', symbol: 'CHF', name: 'Swiss Franc' },

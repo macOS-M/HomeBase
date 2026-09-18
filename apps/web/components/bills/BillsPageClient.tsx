@@ -2,11 +2,9 @@
 
 import { FormEvent, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { useBills, useCreateBill, useDeleteBill, useToggleBillStatus } from '@homebase/api';
+import { useBills, useCreateBill, useDeleteBill, useToggleBillStatus, useCategories, useMembers } from '@homebase/api';
 import { COMMON_CURRENCIES, formatCurrency, getDaysUntilDue } from '@homebase/utils';
-import type { Household } from '@homebase/types';
-
-const BASE_CURRENCY = 'USD';
+import type { Household, Member } from '@homebase/types';
 
 const STYLES = `
   .bp { flex:1; background:#0E0F11; min-height:100vh; font-family:'Geist',sans-serif; color:#F0EDE8; }
@@ -91,9 +89,12 @@ const BILL_ICON_OPTIONS = [
   { value: '🛒', label: 'Groceries' },
 ];
 
-export function BillsPageClient({ household }: { household: Household }) {
+export function BillsPageClient({ household, member }: { household: Household; member: Member }) {
   const supabase = createClient();
+  const baseCurrency = household.base_currency ?? 'USD';
   const { data: bills = [] } = useBills(supabase, household.id);
+  const { data: categories = [] } = useCategories(supabase, household.id);
+  const { data: members = [] } = useMembers(supabase, household.id);
   const createBill = useCreateBill(supabase, household.id);
   const deleteBill = useDeleteBill(supabase, household.id);
   const toggleBill = useToggleBillStatus(supabase, household.id);
@@ -101,7 +102,9 @@ export function BillsPageClient({ household }: { household: Household }) {
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('📄');
   const [amount, setAmount] = useState('');
-  const [currencyCode, setCurrencyCode] = useState(BASE_CURRENCY);
+  const [currencyCode, setCurrencyCode] = useState(baseCurrency);
+  const [categoryId, setCategoryId] = useState('');
+  const [paidBy, setPaidBy] = useState(member.id);
   const [dueDate, setDueDate] = useState(getLocalDateInputValue());
   const [recurring, setRecurring] = useState<'monthly' | 'weekly' | 'yearly' | 'once'>('monthly');
   const [showForm, setShowForm] = useState(false);
@@ -139,6 +142,10 @@ export function BillsPageClient({ household }: { household: Household }) {
       setError('Amount must be greater than 0.');
       return;
     }
+    if (!categoryId || !paidBy) {
+      setError('Choose a category and the member who will pay this bill.');
+      return;
+    }
 
     try {
       await createBill.mutateAsync({
@@ -146,13 +153,17 @@ export function BillsPageClient({ household }: { household: Household }) {
         icon,
         amount: parsed,
         currency_code: currencyCode,
+        category_id: categoryId,
+        paid_by: paidBy,
         due_date: dueDate,
         recurring,
       });
       setName('');
       setIcon('📄');
       setAmount('');
-      setCurrencyCode(BASE_CURRENCY);
+      setCurrencyCode(baseCurrency);
+      setCategoryId('');
+      setPaidBy(member.id);
       setDueDate(getLocalDateInputValue());
       setRecurring('monthly');
       setShowForm(false);
@@ -163,7 +174,8 @@ export function BillsPageClient({ household }: { household: Household }) {
   }
 
   async function handleToggle(billId: string, status: 'paid' | 'pending' | 'overdue') {
-    const nextStatus: 'paid' | 'pending' = status === 'paid' ? 'pending' : 'paid';
+    if (status === 'paid') return;
+    const nextStatus = 'paid';
     try {
       await toggleBill.mutateAsync({ billId, status: nextStatus });
       showToast(nextStatus === 'paid' ? '✅ Payment recorded' : '↩︎ Marked pending');
@@ -201,7 +213,7 @@ export function BillsPageClient({ household }: { household: Household }) {
           <div className="bp-summary">
             <div className="bp-sc">
               <div className="bp-sc-label">Pending Total</div>
-              <div className="bp-sc-val">{formatCurrency(pendingTotal)}</div>
+              <div className="bp-sc-val">{formatCurrency(pendingTotal, baseCurrency)}</div>
               <div className="bp-sc-sub">{pendingBills.length} pending</div>
               <div className="bp-sc-bar" style={{ background: '#E8A020' }} />
             </div>
@@ -258,6 +270,19 @@ export function BillsPageClient({ household }: { household: Household }) {
                         <label className="fld-label">Due date</label>
                         <input className="fld-input" value={dueDate} onChange={(e) => setDueDate(e.target.value)} type="date" required />
                       </div>
+                      <div className="fld">
+                        <label className="fld-label">Budget category</label>
+                        <select className="fld-input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
+                          <option value="">Select category…</option>
+                          {categories.map((category) => <option key={category.id} value={category.id}>{category.icon} {category.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="fld">
+                        <label className="fld-label">Paid by</label>
+                        <select className="fld-input" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} required>
+                          {members.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                        </select>
+                      </div>
                     </div>
                     <div className="form-row">
                       <div className="fld">
@@ -301,9 +326,8 @@ export function BillsPageClient({ household }: { household: Household }) {
                     const daysLeft = getDaysUntilDue(bill.due_date);
                     const isOverdue = bill.status === 'overdue' || (bill.status === 'pending' && daysLeft < 0);
                     const canPayCycle = bill.recurring === 'once' || daysLeft <= 7;
-                    const canReopen = bill.status === 'paid' && bill.recurring === 'once';
-                    const canChangeStatus = bill.status === 'paid' ? canReopen : canPayCycle;
-                    const sourceCurrency = bill.currency_code ?? BASE_CURRENCY;
+                    const canChangeStatus = bill.status !== 'paid' && canPayCycle;
+                    const sourceCurrency = bill.currency_code ?? baseCurrency;
                     const sourceAmount = bill.original_amount ?? bill.amount;
                     const dueLabel =
                       daysLeft < 0
@@ -324,32 +348,30 @@ export function BillsPageClient({ household }: { household: Household }) {
                         </div>
                         <div className="bill-amount-wrap">
                           <span className="bill-amount">{formatCurrency(sourceAmount, sourceCurrency)}</span>
-                          {sourceCurrency !== BASE_CURRENCY && <span className="bill-amount-sub">≈ {formatCurrency(bill.amount, BASE_CURRENCY)}</span>}
+                          {sourceCurrency !== baseCurrency && <span className="bill-amount-sub">≈ {formatCurrency(bill.amount, baseCurrency)}</span>}
                         </div>
                         <span className={`bill-badge ${bill.status === 'paid' ? 'paid' : isOverdue ? 'overdue' : 'pending'}`}>
                           {bill.status === 'paid' ? 'Paid' : isOverdue ? 'Overdue' : 'Pending'}
                         </span>
-                        <button
+                        {bill.status !== 'paid' && <button
                           className="btn-mini"
                           disabled={!canChangeStatus}
                           onClick={() => handleToggle(bill.id, bill.status)}
-                          title={!canChangeStatus ? (bill.status === 'paid' ? 'Recurring paid bills are kept as history.' : 'You can pay recurring bills up to 7 days before due date.') : undefined}
+                          title={!canChangeStatus ? 'You can pay recurring bills up to 7 days before due date.' : undefined}
                         >
-                          {bill.status === 'paid'
-                            ? bill.recurring === 'once' ? 'Mark pending' : 'Paid'
-                            : bill.recurring === 'once'
+                          {bill.recurring === 'once'
                               ? 'Mark paid'
                               : canChangeStatus
                                 ? 'Pay cycle'
                                 : 'Not due yet'}
-                        </button>
-                        <button
+                        </button>}
+                        {bill.status !== 'paid' && <button
                           className="btn-mini btn-danger"
                           disabled={deletingBillId === bill.id}
                           onClick={() => handleDelete(bill.id, bill.name)}
                         >
                           {deletingBillId === bill.id ? 'Deleting…' : 'Delete'}
-                        </button>
+                        </button>}
                       </div>
                     );
                   })
@@ -366,7 +388,7 @@ export function BillsPageClient({ household }: { household: Household }) {
                   pendingBills.slice(0, 8).map((bill) => {
                     const daysLeft = getDaysUntilDue(bill.due_date);
                     const isOverdue = daysLeft < 0;
-                    const sourceCurrency = bill.currency_code ?? BASE_CURRENCY;
+                    const sourceCurrency = bill.currency_code ?? baseCurrency;
                     const sourceAmount = bill.original_amount ?? bill.amount;
                     return (
                       <div key={bill.id} className={`bill-row${isOverdue ? ' overdue' : ''}`}>
@@ -377,7 +399,7 @@ export function BillsPageClient({ household }: { household: Household }) {
                         </div>
                         <div className="bill-amount-wrap">
                           <span className="bill-amount">{formatCurrency(sourceAmount, sourceCurrency)}</span>
-                          {sourceCurrency !== BASE_CURRENCY && <span className="bill-amount-sub">≈ {formatCurrency(bill.amount, BASE_CURRENCY)}</span>}
+                          {sourceCurrency !== baseCurrency && <span className="bill-amount-sub">≈ {formatCurrency(bill.amount, baseCurrency)}</span>}
                         </div>
                       </div>
                     );

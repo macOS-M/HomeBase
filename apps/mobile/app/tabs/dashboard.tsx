@@ -6,31 +6,46 @@ import {
   StyleSheet,
   SafeAreaView,
 } from 'react-native';
+import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { useAuthStore, useUIStore } from '@homebase/store';
 import { useExpenses, useBills, useBalances, useCategories, useMembers } from '@homebase/api';
-import { formatCurrency, calculateSmartSettlements } from '@homebase/utils';
+import { formatCurrency, calculateSmartSettlements, isDateInBudgetCycle } from '@homebase/utils';
 import { supabase } from '@/lib/supabase';
 
 export default function DashboardScreen() {
   const router = useRouter();
   const { household, member } = useAuthStore();
-  const { selectedMonth } = useUIStore();
+  const { selectedMonth, setSelectedMonth } = useUIStore();
 
   const householdId = household?.id ?? '';
+  const baseCurrency = household?.base_currency ?? 'USD';
+  const cycleStartDay = household?.budget_cycle_start_day ?? 1;
+
+  useEffect(() => {
+    const now = new Date();
+    const calendarMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (now.getDate() < cycleStartDay && selectedMonth === calendarMonth) {
+      const priorMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setSelectedMonth(`${priorMonth.getFullYear()}-${String(priorMonth.getMonth() + 1).padStart(2, '0')}`);
+    }
+  }, [cycleStartDay, selectedMonth, setSelectedMonth]);
  
 
-  const { data: expenses = [] } = useExpenses(supabase, householdId, selectedMonth);
+  const { data: expenses = [] } = useExpenses(supabase, householdId, selectedMonth, cycleStartDay);
   const { data: bills = [] } = useBills(supabase, householdId);
   const { data: balances = [] } = useBalances(supabase, householdId, selectedMonth);
   const { data: categories = [] } = useCategories(supabase, householdId);
   const { data: members = [] } = useMembers(supabase, householdId);
 
   const totalSpent = expenses.reduce((s, e) => s + e.amount, 0);
-  const memberBudgetTotal = members.reduce((sum, m) => sum + (m.monthly_budget ?? 0), 0);
-  const income = household?.monthly_income ?? memberBudgetTotal;
-  const remaining = income - totalSpent;
-  const pendingBills = bills.filter(b => b.status === 'pending');
+  const income = household?.monthly_income ?? 0;
+  const pendingBills = bills.filter(
+    (bill) => (bill.status === 'pending' || bill.status === 'overdue') &&
+      isDateInBudgetCycle(bill.due_date, selectedMonth, cycleStartDay)
+  );
+  const pendingTotal = pendingBills.reduce((sum, bill) => sum + bill.amount, 0);
+  const safeToSpend = income - totalSpent - pendingTotal;
   const settlements = calculateSmartSettlements(balances);
 
   const groceryCat = categories.find(c => c.is_grocery);
@@ -61,9 +76,9 @@ export default function DashboardScreen() {
         {/* Summary cards */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.cardsRow}>
-          <SummaryCard label="Spent" value={formatCurrency(totalSpent)} accent="#C84B31" />
-          <SummaryCard label="Remaining" value={formatCurrency(remaining)} accent="#2D5F3F" />
-          <SummaryCard label="Pending Bills" value={`${pendingBills.length}`} accent="#E8A020" />
+          <SummaryCard label="Spent" value={formatCurrency(totalSpent, baseCurrency)} accent="#C84B31" />
+          <SummaryCard label="Safe to Spend" value={formatCurrency(safeToSpend, baseCurrency)} accent="#2D5F3F" />
+          <SummaryCard label="Due Bills" value={formatCurrency(pendingTotal, baseCurrency)} accent="#E8A020" />
           <SummaryCard label="Settlements" value={`${settlements.length}`} accent="#2B4C7E" />
         </ScrollView>
 
@@ -76,8 +91,8 @@ export default function DashboardScreen() {
                 <View style={[styles.groceryFill, { width: `${groceryPct}%` as any }]} />
               </View>
               <View style={styles.groceryLabels}>
-                <Text style={styles.grocerySpent}>{formatCurrency(grocerySpent)} spent</Text>
-                <Text style={styles.groceryBudget}>of {formatCurrency(groceryCat.budget_limit ?? 0)}</Text>
+                <Text style={styles.grocerySpent}>{formatCurrency(grocerySpent, baseCurrency)} spent</Text>
+                <Text style={styles.groceryBudget}>of {formatCurrency(groceryCat.budget_limit ?? 0, baseCurrency)}</Text>
               </View>
             </View>
           </View>
@@ -99,7 +114,7 @@ export default function DashboardScreen() {
                     <Text style={styles.listTitle}>{exp.name}</Text>
                     <Text style={styles.listSub}>{payer?.name} · {exp.date}</Text>
                   </View>
-                  <Text style={styles.listAmount}>{formatCurrency(exp.amount)}</Text>
+                  <Text style={styles.listAmount}>{formatCurrency(exp.amount, baseCurrency)}</Text>
                 </View>
               );
             })}
@@ -124,7 +139,7 @@ export default function DashboardScreen() {
                     <Text style={styles.listSub}>Unsettled balance</Text>
                   </View>
                   <Text style={[styles.listAmount, { color: '#C84B31' }]}>
-                    {formatCurrency(bal.amount)}
+                    {formatCurrency(bal.amount, baseCurrency)}
                   </Text>
                 </View>
               );
@@ -161,7 +176,7 @@ export default function DashboardScreen() {
                   <Text style={styles.listTitle}>{bill.name}</Text>
                   <Text style={styles.listSub}>Due {bill.due_date}</Text>
                 </View>
-                <Text style={styles.listAmount}>{formatCurrency(bill.amount)}</Text>
+                <Text style={styles.listAmount}>{formatCurrency(bill.amount, baseCurrency)}</Text>
               </View>
             ))}
             {pendingBills.length === 0 && (

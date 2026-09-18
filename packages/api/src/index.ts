@@ -2,9 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   aggregateBalances,
   calculateSmartSettlements,
-  calculateEqualSplits,
-  calculatePercentageSplits,
   convertCurrency,
+  getBudgetCycleRange,
 } from '@homebase/utils';
 import type {
   Expense,
@@ -17,6 +16,7 @@ import type {
   Member,
   Balance,
   SmartSettlement,
+  Settlement,
   WalletTransaction,
   DashboardData,
 } from '@homebase/types';
@@ -24,7 +24,36 @@ import type {
 // The supabase client is injected so both web and mobile can pass their own
 // platform-specific instance without this package depending on a specific env.
 type SupabaseClient = any;
-const HOUSEHOLD_BASE_CURRENCY = 'USD';
+const DEFAULT_BASE_CURRENCY = 'USD';
+
+async function getHouseholdBaseCurrency(supabase: SupabaseClient, householdId: string) {
+  const { data, error } = await supabase
+    .from('households')
+    .select('base_currency')
+    .eq('id', householdId)
+    .single();
+  if (error) throw error;
+  return String(data?.base_currency ?? DEFAULT_BASE_CURRENCY).toUpperCase();
+}
+
+function validateSplitTotal(
+  total: number,
+  splits: { member_id: string; amount: number }[]
+) {
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new Error('Amount must be greater than zero.');
+  }
+  if (splits.length === 0) {
+    throw new Error('At least one split is required.');
+  }
+  if (splits.some((split) => !split.member_id || !Number.isFinite(split.amount) || split.amount < 0)) {
+    throw new Error('Each split must have a member and a non-negative amount.');
+  }
+  const splitTotal = splits.reduce((sum, split) => sum + split.amount, 0);
+  if (Math.abs(splitTotal - total) > 0.01) {
+    throw new Error('Expense splits must total the expense amount.');
+  }
+}
 
 function scaleSplitsToTotal(
   splits: { member_id: string; amount: number; percentage?: number }[],
@@ -54,11 +83,6 @@ function scaleSplitsToTotal(
   return scaled;
 }
 
-function toLocalISODate(input: Date) {
-  const offsetMs = input.getTimezoneOffset() * 60 * 1000;
-  return new Date(input.getTime() - offsetMs).toISOString().split('T')[0];
-}
-
 // ─── Query Keys ───────────────────────────────────────────────────────────────
 
 export const queryKeys = {
@@ -66,8 +90,8 @@ export const queryKeys = {
     ['dashboard', householdId, month] as const,
   expensesAll: (householdId: string) =>
     ['expenses-all', householdId] as const,
-  expenses: (householdId: string, month: string) =>
-    ['expenses', householdId, month] as const,
+  expenses: (householdId: string, month: string, cycleStartDay = 1) =>
+    ['expenses', householdId, month, cycleStartDay] as const,
   expense: (id: string) => ['expense', id] as const,
   categories: (householdId: string) => ['categories', householdId] as const,
   bills: (householdId: string) => ['bills', householdId] as const,
@@ -79,26 +103,47 @@ export const queryKeys = {
   wallet: (householdId: string) => ['wallet', householdId] as const,
 };
 
+// ─── Household ───────────────────────────────────────────────────────────────
+
+export function useDeleteHousehold(
+  supabase: SupabaseClient,
+  householdId: string
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (confirmationName: string) => {
+      const { error } = await supabase.rpc('delete_household', {
+        p_household_id: householdId,
+        p_confirmation_name: confirmationName,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.clear();
+    },
+  });
+}
+
 // ─── Expenses ─────────────────────────────────────────────────────────────────
 
 export function useExpenses(
   supabase: SupabaseClient,
   householdId: string,
-  month: string // 'YYYY-MM'
+  month: string, // cycle start month, YYYY-MM
+  cycleStartDay = 1
 ) {
+  const { startDate, endExclusive } = getBudgetCycleRange(month, cycleStartDay);
   return useQuery({
-    queryKey: queryKeys.expenses(householdId, month),
+    queryKey: queryKeys.expenses(householdId, month, cycleStartDay),
     queryFn: async (): Promise<Expense[]> => {
-      const startDate = `${month}-01`;
-      const start = new Date(`${startDate}T00:00:00`);
-      const endDate = toLocalISODate(new Date(start.getFullYear(), start.getMonth() + 1, 0));
-
       const { data, error } = await supabase
         .from('expenses')
         .select('*, splits:expense_splits(*)')
         .eq('household_id', householdId)
+        .is('voided_at', null)
         .gte('date', startDate)
-        .lte('date', endDate)
+        .lt('date', endExclusive)
         .order('date', { ascending: false });
 
       if (error) throw error;
@@ -119,6 +164,7 @@ export function useExpensesAll(
         .from('expenses')
         .select('*, splits:expense_splits(*)')
         .eq('household_id', householdId)
+        .is('voided_at', null)
         .order('date', { ascending: false });
 
       if (error) throw error;
@@ -138,43 +184,30 @@ export function useCreateExpense(
     mutationFn: async (input: CreateExpenseInput): Promise<Expense> => {
       const { splits, ...expenseData } = input;
       const inputAmount = Number(input.amount);
-      const inputCurrency = (input.currency_code ?? HOUSEHOLD_BASE_CURRENCY).toUpperCase();
+      validateSplitTotal(inputAmount, splits);
+      const householdCurrency = await getHouseholdBaseCurrency(supabase, householdId);
+      const inputCurrency = (input.currency_code ?? householdCurrency).toUpperCase();
       const { convertedAmount, rate } = await convertCurrency(
         inputAmount,
         inputCurrency,
-        HOUSEHOLD_BASE_CURRENCY
+        householdCurrency
       );
 
       const scaledSplits = scaleSplitsToTotal(splits, inputAmount, convertedAmount);
 
-      const { data: expense, error: expenseError } = await supabase
-        .from('expenses')
-        .insert({
+      const { data, error } = await supabase.rpc('create_expense_with_splits', {
+        p_household_id: householdId,
+        p_expense: {
           ...expenseData,
           amount: convertedAmount,
           original_amount: inputAmount,
           currency_code: inputCurrency,
           fx_rate: rate,
-          household_id: householdId,
-        })
-        .select()
-        .single();
-
-      if (expenseError) throw expenseError;
-
-      const splitRows = scaledSplits.map((s) => ({
-        ...s,
-        expense_id: expense.id,
-        is_settled: false,
-      }));
-
-      const { error: splitError } = await supabase
-        .from('expense_splits')
-        .insert(splitRows);
-
-      if (splitError) throw splitError;
-
-      return expense;
+        },
+        p_splits: scaledSplits,
+      });
+      if (error) throw error;
+      return data as Expense;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses-all', householdId] });
@@ -193,16 +226,17 @@ export function useDeleteExpense(
 
   return useMutation({
     mutationFn: async (expenseId: string) => {
-      const { error } = await supabase
-        .from('expenses')
-        .delete()
-        .eq('id', expenseId);
+      const { error } = await supabase.rpc('void_expense', {
+        p_expense_id: expenseId,
+        p_reason: null,
+      });
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses-all', householdId] });
       queryClient.invalidateQueries({ queryKey: ['expenses', householdId] });
       queryClient.invalidateQueries({ queryKey: ['dashboard', householdId] });
+      queryClient.invalidateQueries({ queryKey: ['balances', householdId] });
     },
   });
 }
@@ -249,11 +283,15 @@ export function useCreateBill(supabase: SupabaseClient, householdId: string) {
   return useMutation({
     mutationFn: async (input: CreateBillInput): Promise<Bill> => {
       const inputAmount = Number(input.amount);
-      const inputCurrency = (input.currency_code ?? HOUSEHOLD_BASE_CURRENCY).toUpperCase();
+      if (!Number.isFinite(inputAmount) || inputAmount <= 0) {
+        throw new Error('Bill amount must be greater than zero.');
+      }
+      const householdCurrency = await getHouseholdBaseCurrency(supabase, householdId);
+      const inputCurrency = (input.currency_code ?? householdCurrency).toUpperCase();
       const { convertedAmount, rate } = await convertCurrency(
         inputAmount,
         inputCurrency,
-        HOUSEHOLD_BASE_CURRENCY
+        householdCurrency
       );
 
       const { data, error } = await supabase
@@ -287,7 +325,8 @@ export function useDeleteBill(supabase: SupabaseClient, householdId: string) {
       const { error } = await supabase
         .from('bills')
         .delete()
-        .eq('id', billId);
+        .eq('id', billId)
+        .eq('household_id', householdId);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -303,161 +342,6 @@ export function useToggleBillStatus(
 ) {
   const queryClient = useQueryClient();
 
-  function toISODate(input: Date) {
-    return input.toISOString().split('T')[0];
-  }
-
-  function todayLocalISODate() {
-    const now = new Date();
-    const offsetMs = now.getTimezoneOffset() * 60 * 1000;
-    return new Date(now.getTime() - offsetMs).toISOString().split('T')[0];
-  }
-
-  function daysUntilDueFromToday(dueDate: string) {
-    const today = todayLocalISODate();
-    const [ty, tm, td] = today.split('-').map(Number);
-    const [dy, dm, dd] = dueDate.split('-').map(Number);
-    const todayUtc = Date.UTC(ty, tm - 1, td);
-    const dueUtc = Date.UTC(dy, dm - 1, dd);
-    return Math.ceil((dueUtc - todayUtc) / (1000 * 60 * 60 * 24));
-  }
-
-  function addRecurringInterval(dueDate: string, recurring: 'monthly' | 'weekly' | 'yearly' | 'once') {
-    const [year, month, day] = dueDate.split('-').map(Number);
-    const base = new Date(Date.UTC(year, month - 1, day));
-
-    if (recurring === 'weekly') {
-      base.setUTCDate(base.getUTCDate() + 7);
-      return toISODate(base);
-    }
-
-    if (recurring === 'yearly') {
-      const targetYear = base.getUTCFullYear() + 1;
-      const targetMonth = base.getUTCMonth();
-      const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
-      const targetDay = Math.min(base.getUTCDate(), daysInTargetMonth);
-      return toISODate(new Date(Date.UTC(targetYear, targetMonth, targetDay)));
-    }
-
-    if (recurring === 'monthly') {
-      const targetYear = base.getUTCFullYear();
-      const targetMonth = base.getUTCMonth() + 1;
-      const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
-      const targetDay = Math.min(base.getUTCDate(), daysInTargetMonth);
-      return toISODate(new Date(Date.UTC(targetYear, targetMonth, targetDay)));
-    }
-
-    return dueDate;
-  }
-
-  async function createBillPaymentExpense(params: {
-    bill: {
-      id: string;
-      name: string;
-      amount: number;
-      original_amount?: number;
-      currency_code?: string;
-      fx_rate?: number;
-      due_date: string;
-    };
-  }) {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError) throw userError;
-    if (!user) throw new Error('You must be signed in to pay bills.');
-
-    const { data: payer, error: payerError } = await supabase
-      .from('members')
-      .select('id')
-      .eq('household_id', householdId)
-      .eq('user_id', user.id)
-      .single();
-
-    if (payerError || !payer) {
-      throw new Error('Unable to determine who paid this bill.');
-    }
-
-    const { data: household, error: householdError } = await supabase
-      .from('households')
-      .select('default_split_type')
-      .eq('id', householdId)
-      .single();
-
-    if (householdError || !household) {
-      throw new Error('Unable to load household split settings.');
-    }
-
-    const { data: members, error: membersError } = await supabase
-      .from('members')
-      .select('id, monthly_budget')
-      .eq('household_id', householdId);
-
-    if (membersError || !members || members.length === 0) {
-      throw new Error('Unable to load household members for bill split.');
-    }
-
-    const amount = params.bill.amount;
-    const memberIds = members.map((m: any) => m.id);
-    const splitType = household.default_split_type === 'percentage' ? 'percentage' : 'equal';
-
-    const splits = splitType === 'percentage'
-      ? (() => {
-          const totalBudget = members.reduce((sum: number, m: any) => sum + Math.max(0, m.monthly_budget ?? 0), 0);
-          if (totalBudget <= 0) return calculateEqualSplits(amount, memberIds);
-          return calculatePercentageSplits(
-            amount,
-            members.map((m: any) => ({
-              member_id: m.id,
-              percentage: (Math.max(0, m.monthly_budget ?? 0) / totalBudget) * 100,
-            }))
-          );
-        })()
-      : calculateEqualSplits(amount, memberIds);
-
-    const { data: expense, error: expenseError } = await supabase
-      .from('expenses')
-      .insert({
-        household_id: householdId,
-        name: params.bill.name,
-        amount,
-        original_amount: params.bill.original_amount ?? amount,
-        currency_code: params.bill.currency_code ?? HOUSEHOLD_BASE_CURRENCY,
-        fx_rate: params.bill.fx_rate ?? 1,
-        source_type: 'bill',
-        source_bill_id: params.bill.id,
-        category_id: null,
-        paid_by: payer.id,
-        split_type: splitType,
-        date: todayLocalISODate(),
-      })
-      .select('id')
-      .single();
-
-    if (expenseError || !expense) {
-      throw expenseError ?? new Error('Unable to create bill expense.');
-    }
-
-    const splitRows = splits.map((s) => ({
-      expense_id: expense.id,
-      member_id: s.member_id,
-      amount: s.amount,
-      percentage: s.percentage,
-      is_settled: false,
-    }));
-
-    const { error: splitError } = await supabase
-      .from('expense_splits')
-      .insert(splitRows);
-
-    if (splitError) {
-      await supabase.from('expenses').delete().eq('id', expense.id);
-      throw splitError;
-    }
-  }
-
   return useMutation({
     mutationFn: async ({
       billId,
@@ -466,131 +350,14 @@ export function useToggleBillStatus(
       billId: string;
       status: 'paid' | 'pending';
     }) => {
-      const { data: bill, error: billError } = await supabase
-        .from('bills')
-        .select('id, household_id, name, icon, amount, original_amount, currency_code, fx_rate, recurring, due_date, status')
-        .eq('id', billId)
-        .eq('household_id', householdId)
-        .single();
-
-      if (billError) throw billError;
-
-      if (status === 'paid') {
-        if (bill.status === 'paid') return;
-
-        if (bill.recurring === 'once') {
-          const paidAt = new Date().toISOString();
-          const { error } = await supabase
-            .from('bills')
-            .update({ status: 'paid', paid_at: paidAt })
-            .eq('id', billId)
-            .eq('household_id', householdId);
-          if (error) throw error;
-
-          try {
-            await createBillPaymentExpense({ bill });
-          } catch (expenseError) {
-            await supabase
-              .from('bills')
-              .update({ status: 'pending', paid_at: null })
-              .eq('id', billId)
-              .eq('household_id', householdId);
-            throw expenseError;
-          }
-
-          return;
-        }
-
-        const daysUntilDue = daysUntilDueFromToday(bill.due_date);
-        if (daysUntilDue > 7) {
-          throw new Error('This bill is not due yet. You can pay recurring bills when they are within 7 days of due date.');
-        }
-
-        const nextDueDate = addRecurringInterval(bill.due_date, bill.recurring);
-        const paidAt = new Date().toISOString();
-        const baseCurrency = HOUSEHOLD_BASE_CURRENCY;
-        const billOriginalAmount = bill.original_amount ?? bill.amount;
-        const billCurrency = (bill.currency_code ?? baseCurrency).toUpperCase();
-        const { convertedAmount: nextCycleAmount, rate: nextCycleRate } = await convertCurrency(
-          billOriginalAmount,
-          billCurrency,
-          baseCurrency
-        );
-
-        const { error: markPaidError } = await supabase
-          .from('bills')
-          .update({
-            status: 'paid',
-            paid_at: paidAt,
-          })
-          .eq('id', billId)
-          .eq('household_id', householdId);
-
-        if (markPaidError) throw markPaidError;
-
-        try {
-          await createBillPaymentExpense({ bill });
-        } catch (expenseError) {
-          await supabase
-            .from('bills')
-            .update({ status: 'pending', paid_at: null })
-            .eq('id', billId)
-            .eq('household_id', householdId);
-          throw expenseError;
-        }
-
-        const { error: createNextError } = await supabase
-          .from('bills')
-          .insert({
-            household_id: householdId,
-            name: bill.name,
-            icon: bill.icon,
-            amount: nextCycleAmount,
-            original_amount: billOriginalAmount,
-            currency_code: billCurrency,
-            fx_rate: nextCycleRate,
-            due_date: nextDueDate,
-            status: 'pending',
-            recurring: bill.recurring,
-          });
-
-        if (createNextError) {
-          await supabase
-            .from('expenses')
-            .delete()
-            .eq('household_id', householdId)
-            .eq('source_type', 'bill')
-            .eq('source_bill_id', billId);
-          await supabase
-            .from('bills')
-            .update({ status: 'pending', paid_at: null })
-            .eq('id', billId)
-            .eq('household_id', householdId);
-          throw createNextError;
-        }
-
-        return;
+      if (status !== 'paid') {
+        throw new Error('Paid bill occurrences are immutable. Record a correcting expense instead of reopening a payment.');
       }
 
-      if (bill.status === 'paid' && bill.recurring !== 'once') {
-        throw new Error('Recurring paid bills are kept as history and cannot be reopened.');
-      }
-
-      if (bill.status === 'paid' && bill.recurring === 'once') {
-        await supabase
-          .from('expenses')
-          .delete()
-          .eq('household_id', householdId)
-          .eq('source_type', 'bill')
-          .eq('source_bill_id', billId);
-      }
-
-      const { error } = await supabase
-        .from('bills')
-        .update({ status: 'pending', paid_at: null })
-        .eq('id', billId)
-        .eq('household_id', householdId);
-      if (error) throw error;
+      const { error: paymentError } = await supabase.rpc('record_bill_payment', {
+        p_bill_id: billId,
+      });
+      if (paymentError) throw paymentError;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bills', householdId] });
@@ -827,14 +594,27 @@ export function useMembers(supabase: SupabaseClient, householdId: string) {
 export function useBalances(
   supabase: SupabaseClient,
   householdId: string,
-  month: string
+  _month?: string
 ) {
-  const { data: expenses } = useExpenses(supabase, householdId, month);
+  const { data: expenses } = useExpensesAll(supabase, householdId);
+  const settlementsQuery = useQuery({
+    queryKey: ['settlements', householdId],
+    queryFn: async (): Promise<Settlement[]> => {
+      const { data, error } = await supabase
+        .from('settlements')
+        .select('*')
+        .eq('household_id', householdId)
+        .order('settled_at', { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!householdId,
+  });
 
   return useQuery({
-    queryKey: queryKeys.balances(householdId, month),
-    queryFn: (): Balance[] => aggregateBalances(expenses ?? []),
-    enabled: !!expenses,
+    queryKey: ['balances', householdId, 'all-time'],
+    queryFn: (): Balance[] => aggregateBalances(expenses ?? [], settlementsQuery.data ?? []),
+    enabled: !!expenses && !!settlementsQuery.data,
   });
 }
 
@@ -863,35 +643,17 @@ export function useSettleBalance(
       toMemberId: string;
       amount: number;
     }) => {
-      // Mark all relevant splits as settled
-      const { data: expenses } = await supabase
-        .from('expenses')
-        .select('id')
-        .eq('household_id', householdId)
-        .eq('paid_by', toMemberId);
-
-      if (!expenses) return;
-
-      const expenseIds = expenses.map((e: any) => e.id);
-
-      await supabase
-        .from('expense_splits')
-        .update({ is_settled: true })
-        .in('expense_id', expenseIds)
-        .eq('member_id', fromMemberId)
-        .eq('is_settled', false);
-
-      // Log settlement record
-      await supabase.from('settlements').insert({
-        household_id: householdId,
-        from_member_id: fromMemberId,
-        to_member_id: toMemberId,
-        amount,
-        settled_at: new Date().toISOString(),
+      const { error } = await supabase.rpc('record_net_settlement', {
+        p_household_id: householdId,
+        p_from_member_id: fromMemberId,
+        p_to_member_id: toMemberId,
+        p_amount: amount,
+        p_note: null,
       });
+      if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses', householdId] });
+      queryClient.invalidateQueries({ queryKey: ['settlements', householdId] });
       queryClient.invalidateQueries({ queryKey: ['balances', householdId] });
     },
   });

@@ -27,9 +27,15 @@ export function CategoriesPageClient({ household }: { household: Household }) {
   const supabase = createClient();
   const queryClient = useQueryClient();
   const { selectedMonth } = useUIStore();
+  const baseCurrency = household.base_currency ?? 'USD';
 
   const { data: categories = [] } = useCategories(supabase, household.id);
-  const { data: expenses = [] } = useExpenses(supabase, household.id, selectedMonth);
+  const { data: expenses = [] } = useExpenses(
+    supabase,
+    household.id,
+    selectedMonth,
+    household.budget_cycle_start_day ?? 1
+  );
 
   // Compute spending per category from real expense data
   const spendingByCat = expenses.reduce<Record<string, number>>((acc, exp) => {
@@ -255,13 +261,13 @@ export function CategoriesPageClient({ household }: { household: Household }) {
           <div className="summary-strip">
             <div className="summary-cell">
               <div className="summary-cell-label">Total Budgeted</div>
-              <div className="summary-cell-value">{formatCurrency(totalBudgeted)}</div>
+              <div className="summary-cell-value">{formatCurrency(totalBudgeted, baseCurrency)}</div>
               <div className="summary-cell-sub">across {categories.filter(c => c.budget_limit).length} categories</div>
               <div className="summary-accent" style={{ background: '#C9A84C' }} />
             </div>
             <div className="summary-cell">
               <div className="summary-cell-label">Spent This Month</div>
-              <div className="summary-cell-value">{formatCurrency(totalSpent)}</div>
+              <div className="summary-cell-value">{formatCurrency(totalSpent, baseCurrency)}</div>
               <div className="summary-cell-sub">{totalBudgeted > 0 ? Math.round((totalSpent / totalBudgeted) * 100) : 0}% of budget</div>
               <div className="summary-accent" style={{ background: '#E07B6A' }} />
             </div>
@@ -346,9 +352,9 @@ export function CategoriesPageClient({ household }: { household: Household }) {
                       </div>
 
                       <div className="cat-card-amounts">
-                        <span className="cat-card-spent">{formatCurrency(spent)}</span>
+                        <span className="cat-card-spent">{formatCurrency(spent, baseCurrency)}</span>
                         <span className="cat-card-budget">
-                          {limit > 0 ? `of ${formatCurrency(limit)}` : 'no limit set'}
+                          {limit > 0 ? `of ${formatCurrency(limit, baseCurrency)}` : 'no limit set'}
                         </span>
                       </div>
 
@@ -385,7 +391,7 @@ export function CategoriesPageClient({ household }: { household: Household }) {
                       ) : (
                         <div className="cat-action-row">
                           <button className="cat-edit-trigger" onClick={() => startEdit(cat)}>
-                            ✏️ {limit > 0 ? `Edit limit — ${formatCurrency(limit)}/mo` : 'Set budget limit'}
+                            ✏️ {limit > 0 ? `Edit limit — ${formatCurrency(limit, baseCurrency)}/cycle` : 'Set budget limit'}
                           </button>
                           <button className="cat-del-btn" onClick={() => deleteCategory(cat.id)}>🗑</button>
                         </div>

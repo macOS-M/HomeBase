@@ -9,6 +9,11 @@ export interface Member {
   name: string;
   email: string;
   avatar_url?: string;
+  /** What this person contributes to the household plan. */
+  income_contribution?: number;
+  /** Their share of jointly paid expenses. Must total 100 across a household. */
+  expense_share_percentage?: number;
+  /** @deprecated Kept only so existing rows can be migrated safely. */
   monthly_budget?: number;
   role: MemberRole;
   joined_at: string;
@@ -19,6 +24,9 @@ export interface Household {
   name: string;
   created_by: string;
   monthly_income?: number;
+  base_currency?: string;
+  timezone?: string;
+  budget_cycle_start_day?: number;
   default_split_type?: 'equal' | 'percentage';
   budget_period: 'monthly' | 'biweekly' | 'custom';
   invite_code: string;
@@ -61,6 +69,9 @@ export interface Expense {
   receipt_url?: string;
   receipt_items?: ExpenseReceiptItem[];
   notes?: string;
+  voided_at?: string;
+  voided_by?: string;
+  void_reason?: string;
   created_at: string;
 }
 
@@ -108,6 +119,9 @@ export interface Bill {
   original_amount?: number;
   currency_code?: string;
   fx_rate?: number;
+  category_id?: string;
+  paid_by?: string;
+  series_id?: string;
   due_date: string;
   status: BillStatus;
   recurring: RecurringInterval;
@@ -120,6 +134,8 @@ export interface CreateBillInput {
   icon: string;
   amount: number;
   currency_code?: string;
+  category_id: string;
+  paid_by: string;
   due_date: string;
   recurring: RecurringInterval;
 }
@@ -174,6 +190,7 @@ export interface Settlement {
   amount: number;
   settled_at: string;
   note?: string;
+  method?: 'legacy' | 'net_settlement';
 }
 
 export interface SmartSettlement {

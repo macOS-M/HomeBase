@@ -12,6 +12,7 @@ export function BalancesPageClient({ household }: { household: Household }) {
   const { data: balances = [] } = useBalances(supabase, household.id, selectedMonth);
   const { data: members = [] } = useMembers(supabase, household.id);
   const settleBalance = useSettleBalance(supabase, household.id);
+  const baseCurrency = household.base_currency ?? 'USD';
 
   return (
     <>
@@ -47,7 +48,7 @@ export function BalancesPageClient({ household }: { household: Household }) {
       <section className="bal-root">
         <div className="bal-topbar">
           <span className="bal-title">Balances</span>
-          <span className="bal-subtitle">Who owes what this month</span>
+          <span className="bal-subtitle">Net household reimbursements — all time</span>
         </div>
 
         <div className="bal-content">
@@ -68,11 +69,11 @@ export function BalancesPageClient({ household }: { household: Household }) {
                     <li key={`${balance.from_member_id}-${balance.to_member_id}-${index}`} className="bal-row">
                       <div className="bal-main">
                         <p className="bal-name">{fromMember?.name ?? 'Unknown'} → {toMember?.name ?? 'Unknown'}</p>
-                        <p className="bal-meta">Unsettled between members</p>
+                        <p className="bal-meta">Net unsettled reimbursement</p>
                       </div>
 
                       <div className="bal-right">
-                        <p className="bal-amount">{formatCurrency(balance.amount)}</p>
+                        <p className="bal-amount">{formatCurrency(balance.amount, baseCurrency)}</p>
                         <button
                           className="bal-btn"
                           disabled={settleBalance.isPending}
